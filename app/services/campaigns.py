@@ -1,0 +1,287 @@
+"""
+Sistema de Campanhas — Bruno IA / Doss Group
+──────────────────────────────────────────────
+Cada campanha tem:
+  - codigo:       palavra-chave que vem no link wa.me (?text=CODIGO)
+  - nome:         nome interno da campanha
+  - produto:      produto principal
+  - origem:       canal (Instagram, Facebook, Google, etc.)
+  - vigencia:     data de início e fim (None = sem prazo)
+  - condicoes:    condições especiais de pagamento
+  - brinde:       kit / brinde incluso (se houver)
+  - desconto:     desconto especial (se houver)
+  - contexto:     texto injetado no prompt do Bruno com as regras da campanha
+  - ativa:        True/False manual (para pausar sem deletar)
+
+Como usar:
+  Link do anúncio: https://wa.me/5547991933197?text=1801kit
+  Cliente clica → WhatsApp abre com "1801kit" pré-preenchido
+  Bruno detecta o código e carrega as condições da campanha
+"""
+
+from datetime import date
+from typing import Optional
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CADASTRO DE CAMPANHAS
+# ─────────────────────────────────────────────────────────────────────────────
+
+CAMPANHAS = {
+
+    # ── CAMPANHA 1 — DG 1801/2 com Kit Completo ──────────────────────────────
+    "1801kit": {
+        "nome":    "DG 1801/2 Kit Completo",
+        "produto": "Plotter DG 1802i",
+        "origem":  "Trafego Pago- Instagram",
+        "vigencia": (date(2026, 4, 22), date(2026, 5, 31)),
+        "ativa":   True,
+        "condicoes": "35% entrada + 10x sem juros no boleto",
+        "brinde":    "Kit incluso: 5 litros de tinta DGeco + 1 rolo de papel transfer 100m",
+        "desconto":  "Entrada reduzida de 40% para 35% exclusivo desta campanha",
+        "contexto": """
+[CAMPANHA ATIVA: DG 1801/2 KIT COMPLETO]
+O cliente veio do anúncio da DG 1802i com kit.
+
+CONDIÇÕES EXCLUSIVAS DESTA CAMPANHA:
+- Produto: Plotter DG 1802i (2 cabeças i3200, eco solvente ou sublimática)
+- Preço: R$ 68.900
+- Entrada ESPECIAL: 35% (R$ 24.115) + 10x sem juros no boleto
+- KIT INCLUSO: 5 litros de tinta DGeco Premium + 1 rolo papel transfer 100m
+- Campanha válida até 31/05/2026
+
+COMO ABORDAR:
+1. Confirme que o cliente viu o anúncio da 1802i com kit
+2. Apresente as condições especiais IMEDIATAMENTE — não faça ele esperar
+3. Destaque o kit incluso como diferencial: "Já sai imprimindo no dia da instalação"
+4. Condição de entrada reduzida é exclusiva — use como urgência
+
+SCRIPT SUGERIDO:
+"Você veio pelo anúncio certo! A DG 1802i está com condição especial:
+entrada de 35% em vez dos 40% padrão, mais o kit com 5 litros de tinta
+e 1 rolo de papel transfer incluso. Você já sai imprimindo no dia da instalação.
+Me conta, você já está no ramo ou está começando?"
+
+NUNCA diga que a campanha vai acabar para pressionar — use apenas se o cliente pedir prazo.
+""",
+    },
+
+    # ── CAMPANHA 2 — DTF 3002 Entrada Facilitada ─────────────────────────────
+    "dtf30entrada": {
+        "nome":    "DTF 3002 Entrada Facilitada",
+        "produto": "DTF Têxtil 3002",
+        "origem":  "Trafego Pago- Facebook",
+        "vigencia": (date(2026, 4, 22), date(2026, 5, 15)),
+        "ativa":   True,
+        "condicoes": "30% entrada + 12x sem juros no boleto",
+        "brinde":    "Treinamento presencial de 2 dias incluso + kit startup DTF",
+        "desconto":  "Entrada reduzida para 30% e parcelamento estendido para 12x",
+        "contexto": """
+[CAMPANHA ATIVA: DTF 3002 ENTRADA FACILITADA]
+O cliente veio do anúncio do DTF 3002 com entrada facilitada.
+
+CONDIÇÕES EXCLUSIVAS DESTA CAMPANHA:
+- Produto: DG DTF Têxtil 3002 (2 cabeças i1600, largura 300mm)
+- Preço: R$ 52.900
+- Entrada ESPECIAL: 30% (R$ 15.870) + 12x sem juros no boleto (R$ 3.085/mês)
+- KIT STARTUP incluso: tinta DTF branco + CMYK para os primeiros 50 metros
+- Treinamento presencial de 2 dias no cliente incluso
+- Campanha válida até 15/05/2026
+
+COMO ABORDAR:
+1. Confirme o interesse em DTF têxtil
+2. Apresente a entrada de 30% como facilitador para quem está começando
+3. O kit startup é o argumento de "zero risco" — já começa produzindo
+4. 12x reduz o impacto mensal para R$ 3.085
+
+PERFIL ESPERADO: iniciante ou upgrade de plotagem para DTF
+
+SCRIPT SUGERIDO:
+"Você veio pela oferta certa! O DTF 3002 está com entrada de 30%
+em vez dos 40% normais, mais 12 parcelas sem juros — fica R$ 3.085 por mês.
+E já vem com o kit de tinta para você imprimir os primeiros 50 metros.
+Você já trabalha com personalização hoje ou está começando do zero?"
+""",
+    },
+
+    # ── CAMPANHA 3 — DG 1908i Alta Produção ──────────────────────────────────
+    "1908pro": {
+        "nome":    "DG 1908i Alta Produção",
+        "produto": "Plotter DG 1908i",
+        "origem":  "Trafego Pago- Instagram",
+        "vigencia": (date(2026, 5, 1), date(2026, 5, 31)),
+        "ativa":   False,  # ainda não ativa
+        "condicoes": "40% entrada + 18x sem juros no boleto",
+        "brinde":    "Instalação e treinamento com custo de deslocamento por conta da Doss",
+        "desconto":  "Parcelamento estendido para 18x e deslocamento técnico incluso",
+        "contexto": """
+[CAMPANHA ATIVA: DG 1908i ALTA PRODUÇÃO]
+O cliente veio do anúncio da máquina de 8 cabeças para alta produção.
+
+CONDIÇÕES EXCLUSIVAS:
+- Produto: DG 1908i (8 cabeças i3200, até 250m²/h)
+- Preço: R$ 265.000
+- Entrada: 40% (R$ 106.000) + 18x sem juros (R$ 9.722/mês)
+- INCLUSO: deslocamento do técnico para instalação por conta da Doss
+- Válido: maio/2026
+
+PERFIL ESPERADO: gráficas de médio/grande porte, alta produção de lonas/banners
+""",
+    },
+
+    # ── CAMPANHA — Combo de Sublimação DG 1801/2 ─────────────────────────────
+    "combo_sublimacao": {
+        "nome":    "Combo de Sublimação DG 1801/2",
+        "produto": "Plotter DG 1801i / DG 1802i",
+        "origem":  "Trafego Pago- Instagram",
+        "vigencia": None,  # sem prazo definido
+        "ativa":   True,
+        "condicoes": "Condições padrão da tabela (40% entrada + 10x sem juros)",
+        "brinde":    "Kit DGtex 1 litro CMYK completo + 1 rolo papel sublimático 1,60m x 300m x 38g tratado",
+        "desconto":  "",
+        "contexto": """
+[CAMPANHA ATIVA: COMBO DE SUBLIMAÇÃO DG 1801/2]
+O cliente veio pelo anúncio do Combo de Sublimação.
+
+PRODUTO DESTA CAMPANHA:
+A DG 1801/2 existe em duas versões — deixe o cliente escolher:
+
+- DG 1801i (1 cabeça i3200): entrada no mercado, ideal para começar
+- DG 1802i (2 cabeças i3200): mais velocidade e produtividade, ideal para crescer
+
+Preços: consulte a tabela de preços em tempo real (Google Sheets).
+Condições: padrão da tabela (40% entrada + 10x sem juros no boleto).
+
+KIT CORTESIA INCLUSO NAS DUAS VERSÕES:
+- 1 Kit DGtex CMYK completo (1 litro de cada cor: Ciano, Magenta, Amarelo e Preto)
+- 1 Rolo de papel sublimático 1,60m x 300m x 38g tratado
+O cliente já sai imprimindo no dia da instalação.
+
+COMO ABORDAR:
+1. Confirme o interesse em sublimação e entenda o que o cliente quer produzir
+2. Apresente as duas versões (1 ou 2 cabeças) com os preços da tabela
+3. Destaque o kit cortesia como diferencial — "já vem com tinta e papel para começar"
+4. Faça o diagnóstico normal: cidade, volume, ramo, se já tem equipamento
+
+SCRIPT DE APRESENTAÇÃO DO KIT:
+"Essa campanha vem com um kit cortesia completo: 1 litro de cada cor DGtex (CMYK)
+e um rolo de papel sublimático 1,60m x 300m. Você já sai produzindo no dia da instalação,
+sem precisar comprar nada separado para começar."
+
+PERGUNTA CHAVE para direcionar entre 1 ou 2 cabeças:
+"Você está começando agora ou já tem produção e quer expandir?"
+- Começando → DG 1801i (1 cabeça, menor investimento)
+- Expandindo → DG 1802i (2 cabeças, mais velocidade)
+
+NUNCA force uma versão sem entender o volume do cliente.
+""",
+    },
+    # Usada quando não detecta nenhum código de campanha
+    "_padrao": {
+        "nome":    "Atendimento Padrão",
+        "produto": "",
+        "origem":  "WhatsApp Direto",
+        "vigencia": None,
+        "ativa":   True,
+        "condicoes": "40% entrada + 10x sem juros no boleto",
+        "brinde":    "",
+        "desconto":  "",
+        "contexto": "",  # sem contexto especial — fluxo normal do Bruno
+    },
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FUNÇÕES DE DETECÇÃO E ACESSO
+# ─────────────────────────────────────────────────────────────────────────────
+
+def detectar_campanha(primeira_mensagem: str) -> dict:
+    """
+    Detecta a campanha pela primeira mensagem do cliente.
+    Aceita tanto código curto (ex: 1801kit) quanto frases completas.
+    Retorna o dict da campanha ou a campanha padrão.
+    """
+    if not primeira_mensagem:
+        return CAMPANHAS["_padrao"]
+
+    texto = primeira_mensagem.lower().strip()
+
+    # Mapeamento de frases/gatilhos para código de campanha
+    GATILHOS_FRASE = {
+        "combo de sublimação": "combo_sublimacao",
+        "combo sublimacao":    "combo_sublimacao",
+        "combo sublimação":    "combo_sublimacao",
+        "interesse no combo":  "combo_sublimacao",
+    }
+
+    # Verifica gatilhos de frase primeiro
+    for gatilho, codigo in GATILHOS_FRASE.items():
+        if gatilho in texto:
+            campanha = CAMPANHAS.get(codigo)
+            if campanha and campanha.get("ativa", False):
+                campanha = dict(campanha)  # copia para não mutar o original
+                campanha["_codigo"] = codigo
+                return campanha
+
+    # Verifica códigos curtos
+    for codigo, campanha in CAMPANHAS.items():
+        if codigo in ("_padrao",):
+            continue
+        if not campanha.get("ativa", False):
+            continue
+
+        vigencia = campanha.get("vigencia")
+        if vigencia:
+            inicio, fim = vigencia
+            if not (inicio <= date.today() <= fim):
+                continue
+
+        if codigo.lower() in texto:
+            campanha = dict(campanha)
+            campanha["_codigo"] = codigo
+            return campanha
+
+    return CAMPANHAS["_padrao"]
+
+
+def get_contexto_campanha(campanha: dict) -> str:
+    """Retorna o contexto da campanha para injetar no prompt do Bruno."""
+    return campanha.get("contexto", "")
+
+
+def get_origem_campanha(campanha: dict) -> str:
+    """Retorna a origem para o card do CRM."""
+    return campanha.get("origem", "WhatsApp Direto")
+
+
+def listar_campanhas_ativas() -> list:
+    """Lista todas as campanhas ativas e dentro da vigência."""
+    hoje = date.today()
+    ativas = []
+    for codigo, c in CAMPANHAS.items():
+        if codigo == "_padrao": continue
+        if not c.get("ativa"): continue
+        v = c.get("vigencia")
+        if v and not (v[0] <= hoje <= v[1]): continue
+        ativas.append({
+            "codigo":  codigo,
+            "nome":    c["nome"],
+            "produto": c["produto"],
+            "origem":  c["origem"],
+            "fim":     v[1].strftime("%d/%m/%Y") if v else "Sem prazo",
+        })
+    return ativas
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TESTE LOCAL
+# ─────────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    print("\n=== CAMPANHAS ATIVAS ===")
+    for c in listar_campanhas_ativas():
+        print(f"  [{c['codigo']}] {c['nome']} | {c['origem']} | até {c['fim']}")
+
+    print("\n=== TESTE DE DETECÇÃO ===")
+    testes = ["1801kit", "vim pelo anuncio dtf30entrada", "oi", "1908pro", "quero saber sobre plotters"]
+    for msg in testes:
+        c = detectar_campanha(msg)
+        print(f"  '{msg}' → {c['nome']}")

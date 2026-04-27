@@ -1,0 +1,442 @@
+{
+  "reports": [
+    {
+      "reportName": "RELATORIO_AVANCADO_TOP_SCORE_PJ",
+      "identificationReport": {
+        "updateDate": "2021-08-12",
+        "documentNumber": "00001172000180",
+        "statusRegistration": "SITUACAO DO CNPJ EM 09/11/2024: ATIVA",
+        "statusCode": "2",
+        "statusCodeDescription": "ATIVA",
+        "companyName": "U WKM X ZVJHBVK DZZVKI YH",
+        "companyAlias": "UXUVWNN",
+        "companyUrl": "",
+        "companyFoundation": "1994-09-30",
+        "cnae": "2852600",
+        "nireNumber": "0",
+        "predecessorList": [],
+        "reorganizations": []
+      },
+      "QSAReport": {
+        "companyData": {
+          "socialCapitalValue": 31700000.0,
+          "accomplishedValue": 31700000.0,
+          "informationUpdateDate": "2023-12-19",
+          "countryOrigin": "BRASIL",
+          "controlType": "PRIVADO",
+          "nature": "FECHADO"
+        },
+        "partnerCompleteReport": {},
+        "directorCompleteReport": {}
+      },
+      "negativeData": {
+        "pefin": {
+          "summary": {
+            "firstOccurrence": "2024-03-12",
+            "lastOccurrence": "2024-03-12",
+            "count": 5,
+            "balance": 5000.0
+          }
+        },
+        "refin": {
+          "summary": {
+            "firstOccurrence": "2024-03-12",
+            "lastOccurrence": "2024-03-12",
+            "count": 5,
+            "balance": 5000.0
+          }
+        },
+        "collectionRecords": {
+          "summary": {
+            "firstOccurrence": "2024-03-12",
+            "lastOccurrence": "2024-03-12",
+            "count": 5,
+            "balance": 5000.0
+          }
+        },
+        "check": {
+          "summary": {
+            "firstOccurrence": "2024-03-12",
+            "lastOccurrence": "2024-03-12",
+            "count": 5,
+            "balance": 0.0
+          }
+        },
+        "notary": {
+          "summary": {
+            "firstOccurrence": "2024-03-12",
+            "lastOccurrence": "2024-03-12",
+            "count": 5,
+            "balance": 5000.0
+          }
+        }
+      },
+      "facts": {
+        "judgementFilings": {
+          "summary": {
+            "firstOccurrence": "2024-03-12",
+            "lastOccurrence": "2024-03-12",
+            "count": 5,
+            "balance": 5000.0
+          }
+        },
+        "bankrupts": {
+          "summary": {
+            "firstOccurrence": "2024-03-12",
+            "lastOccurrence": "2024-03-12",
+            "count": 5,
+            "balance": 0.0
+          }
+        },
+        "inquiryCompanyResponse": {
+          "quantity": {
+            "actual": 0,
+            "historical": [
+              {
+                "inquiryDate": "2026-03",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2026-02",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2026-01",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-12",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-11",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-10",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-09",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-08",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-07",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-06",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-05",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-04",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-03",
+                "occurrences": 0
+              }
+            ]
+          }
+        }
+      },
+      "score": {
+        "score": 801,
+        "scoreModel": "HPJ8",
+        "defaultRate": "00048",
+        "message": "PROBABILIDADE DE INADIMPLENCIA:  0,48%"
+      },
+      "negativeSummary": {},
+      "checkFilingsHistorical": {
+        "checkFilingsHistoricalResponse": []
+      }
+    }
+  ],
+  "optionalFeatures": {
+    "scores": {
+      "scoreResponse": [
+        {
+          "score": 4398493,
+          "scoreModel": "HLC1",
+          "message": "O LIMITE DE CREDITO PJ FOI CALCULADO COM  BASE  EM  REFERENCIAIS  DE  NEGOCIOS* PONDERADO PELA CLASSIFICACAO DE  RISCO  DE  CREDITO  DA  EMPRESA  MEDIDA  PELAS TECNOLOGIAS DE RATINGS E SCORINGS. (*) REFERENCIAIS DE NEGOCIOS  =  FATURAMENTO REAL, FATURAMENTO PRESUMIDO, MEDIA E VALORES DA ULTIMA COMPRA, MAIOR FATURA  OU MAIOR ACUMULO."
+        }
+      ]
+    },
+    "companyParticipationsReport": {
+      "participateds": [
+        {
+          "participatedDocumentId": "21700125000102",
+          "digitDocument": "02",
+          "documentSequence": "0000",
+          "participatedName": "NY NYDAHWXCKXKAVIE KUXZNUFCIKOE OPWK",
+          "statusCompany": "ATIVA",
+          "updateDate": "2024-03-07",
+          "restrictionSign": false,
+          "address": {},
+          "participants": [
+            {
+              "documentId": "17247933000180",
+              "participantName": "EK NMJCSD CH ISLCE",
+              "documentSequence": "0000",
+              "digitDocument": "80",
+              "participationType": "SC",
+              "participationPercentageCapital": 99.9,
+              "restrictionSign": false
+            }
+          ],
+          "resume": {
+            "participationPercentageCapitalTotal": 99.9
+          }
+        },
+        {
+          "participatedDocumentId": "22257455000120",
+          "digitDocument": "20",
+          "documentSequence": "0000",
+          "participatedName": "FXOIKUZKZ GCUK RI YWWRX GZI RTHAFKENA",
+          "statusCompany": "ATIVA",
+          "updateDate": "2024-03-07",
+          "restrictionSign": false,
+          "address": {},
+          "participants": [
+            {
+              "documentId": "17247933000180",
+              "participantName": "EK NMJCSD CH ISLCE",
+              "documentSequence": "0000",
+              "digitDocument": "80",
+              "participationType": "AC",
+              "participationPercentageCapital": 99.9,
+              "restrictionSign": false
+            }
+          ],
+          "resume": {
+            "participationPercentageCapitalTotal": 99.9
+          }
+        },
+        {
+          "participatedDocumentId": "24261926000107",
+          "digitDocument": "07",
+          "documentSequence": "0000",
+          "participatedName": "RZS KCDKUKQPTHKHI CW ZWOG UJSN",
+          "statusCompany": "ATIVA",
+          "updateDate": "2024-03-07",
+          "restrictionSign": false,
+          "address": {},
+          "participants": [
+            {
+              "documentId": "02693160782",
+              "participantName": "RRDSWIEI RICDFSEWY LNUKEI CLUNUZ WKKENKPWLFCA",
+              "digitDocument": "82",
+              "participationType": "SC/AD",
+              "participationPercentageCapital": 99.5,
+              "restrictionSign": false
+            }
+          ],
+          "resume": {
+            "participationPercentageCapitalTotal": 99.5
+          }
+        },
+        {
+          "participatedDocumentId": "07213796000100",
+          "digitDocument": "00",
+          "documentSequence": "0000",
+          "participatedName": "FWZTK ACNKU WOMS E/Z",
+          "statusCompany": "ATIVA",
+          "squareCompany": "SPO",
+          "updateDate": "2024-03-07",
+          "restrictionSign": false,
+          "address": {
+            "city": "SAO PAULO",
+            "state": "SP"
+          },
+          "participants": [
+            {
+              "documentId": "12895202753",
+              "participantName": "ESPOLIO DE CWLAKUSI CAPOLST FFZVWKVNOKFXH RHXWWKTK SH DN",
+              "digitDocument": "53",
+              "participationType": "AC",
+              "participationPercentageCapital": 10.3,
+              "restrictionSign": false
+            },
+            {
+              "documentId": "00000000000",
+              "participantName": "ESPOLIO DE CIZANRGWD CH HQEKE SKKJFCGNIKNLZ N CW YWXUD",
+              "participationType": "AC",
+              "participationPercentageCapital": 1.9,
+              "restrictionSign": false
+            },
+            {
+              "documentId": "02693160782",
+              "participantName": "RRDSWIEI RICDFSEWY LNUKEI CLUNUZ WKKENKPWLFCA",
+              "digitDocument": "82",
+              "participationType": "AC",
+              "participationPercentageCapital": 0.0,
+              "restrictionSign": false
+            }
+          ],
+          "resume": {
+            "participationPercentageCapitalTotal": 12.200000000000001
+          }
+        },
+        {
+          "participatedDocumentId": "04889743000115",
+          "digitDocument": "15",
+          "documentSequence": "0000",
+          "participatedName": "NUSYUJAI KYOOUBHXVW NCREIOC UGRF",
+          "statusCompany": "ATIVA",
+          "updateDate": "2024-03-07",
+          "restrictionSign": false,
+          "address": {},
+          "participants": [
+            {
+              "documentId": "17247933000180",
+              "participantName": "EK NMJCSD CH ISLCE",
+              "documentSequence": "0000",
+              "digitDocument": "80",
+              "participationType": "SC",
+              "participationPercentageCapital": 50.0,
+              "restrictionSign": false
+            }
+          ],
+          "resume": {
+            "participationPercentageCapitalTotal": 50.0
+          }
+        },
+        {
+          "participatedDocumentId": "17247891000188",
+          "digitDocument": "88",
+          "documentSequence": "0000",
+          "participatedName": "EK TKCNI FMCTHAW",
+          "statusCompany": "ATIVA",
+          "updateDate": "2024-03-07",
+          "restrictionSign": false,
+          "address": {},
+          "participants": [
+            {
+              "documentId": "00000000000",
+              "participantName": "ESPOLIO DE CIZANRGWD CH HQEKE SKKJFCGNIKNLZ N CW YWXUD",
+              "participationType": "AC",
+              "participationPercentageCapital": 30.1,
+              "restrictionSign": false
+            }
+          ],
+          "resume": {
+            "participationPercentageCapitalTotal": 30.1
+          }
+        },
+        {
+          "participatedDocumentId": "00001164000133",
+          "digitDocument": "33",
+          "documentSequence": "0000",
+          "participatedName": "FZ WRSNPZU G/H",
+          "statusCompany": "ATIVA",
+          "squareCompany": "BSA",
+          "updateDate": "2024-03-07",
+          "restrictionSign": false,
+          "address": {
+            "city": "BRASILIA",
+            "state": "DF"
+          },
+          "participants": [
+            {
+              "documentId": "00001172000180",
+              "participantName": "EK FXIAHFI NTHVWUZWUEW",
+              "documentSequence": "0000",
+              "digitDocument": "80",
+              "participationType": "AC",
+              "participationPercentageCapital": 100.0,
+              "restrictionSign": true
+            }
+          ],
+          "resume": {
+            "participationPercentageCapitalTotal": 100.0
+          }
+        },
+        {
+          "participatedDocumentId": "06271258000109",
+          "digitDocument": "09",
+          "documentSequence": "0000",
+          "participatedName": "NYYTWMC XCKIGWLCC M/H",
+          "statusCompany": "ATIVA",
+          "updateDate": "2024-03-07",
+          "restrictionSign": false,
+          "address": {},
+          "participants": [
+            {
+              "documentId": "02693160782",
+              "participantName": "RRDSWIEI RICDFSEWY LNUKEI CLUNUZ WKKENKPWLFCA",
+              "digitDocument": "82",
+              "participationType": "AC",
+              "participationPercentageCapital": 47.6,
+              "restrictionSign": false
+            }
+          ],
+          "resume": {
+            "participationPercentageCapitalTotal": 47.6
+          }
+        },
+        {
+          "participatedDocumentId": "02374250000117",
+          "digitDocument": "17",
+          "documentSequence": "0000",
+          "participatedName": "TKFZX F MHLHVWQHI NQ AJSC",
+          "statusCompany": "ATIVA",
+          "squareCompany": "BSA",
+          "updateDate": "2024-03-07",
+          "restrictionSign": false,
+          "address": {
+            "city": "BRASILIA",
+            "state": "DF"
+          },
+          "participants": [
+            {
+              "documentId": "00001172000180",
+              "participantName": "EK FXIAHFI NTHVWUZWUEW",
+              "documentSequence": "0000",
+              "digitDocument": "80",
+              "participationType": "SC",
+              "participationPercentageCapital": 50.0,
+              "restrictionSign": true
+            }
+          ],
+          "resume": {
+            "participationPercentageCapitalTotal": 50.0
+          }
+        },
+        {
+          "participatedDocumentId": "08811648000150",
+          "digitDocument": "50",
+          "documentSequence": "0000",
+          "participatedName": "TKFZX WIONULSIF G/K",
+          "statusCompany": "ATIVA",
+          "squareCompany": "CGE",
+          "updateDate": "2024-03-07",
+          "restrictionSign": false,
+          "address": {
+            "city": "CAMPINA GRANDE",
+            "state": "PB"
+          },
+          "participants": [
+            {
+              "documentId": "00000000000",
+              "participantName": "ESPOLIO DE CIZANRGWD CH HQEKE SKKJFCGNIKNLZ N CW YWXUD",
+              "participationType": "AC",
+              "participationPercentageCapital": 33.3,
+              "restrictionSign": false
+            }
+          ],
+          "resume": {
+            "participationPercentageCapitalTotal": 33.3
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,293 @@
+{
+  "reports": [
+    {
+      "reportName": "RELATORIO_AVANCADO_TOP_SCORE_PJ",
+      "identificationReport": {
+        "updateDate": "2025-05-21",
+        "documentNumber": "18264058000108",
+        "statusRegistration": "SITUACAO DO CNPJ EM 10/05/2025: ATIVA",
+        "statusCode": "2",
+        "statusCodeDescription": "ATIVA",
+        "companyName": "SO REVENDO COMERCIO DE ARTIGOS PARA PUBLICIDADE LTDA ME",
+        "companyAlias": "DOSS TEXTIL",
+        "address": {
+          "addressLine": "R PEIXES 755",
+          "zipCode": "89225520",
+          "district": "AVENTUREIRO",
+          "city": "JOINVILLE",
+          "state": "SC"
+        },
+        "phone": {
+          "areaCode": "47",
+          "phoneNumber": "30278885"
+        },
+        "companyUrl": "",
+        "partnership": "SOCIEDADE EMPRESARIA LIMITADA",
+        "companyRegister": "1744466664",
+        "companyRegisterDate": "2024-12-31",
+        "companyFoundation": "2013-06-08",
+        "stateRegistration": "258383232",
+        "economicActivity": "COMERCIO",
+        "cnae": "4689399",
+        "serasaActiveCode": "C000000",
+        "nireNumber": "42207873580",
+        "predecessorList": [
+          {
+            "predecessorName": "SABRINA MORAES BOEGERSHAUSEN ME",
+            "predecessorDate": "2023-09-28"
+          },
+          {
+            "predecessorName": "SABRINA MORAES BOEGERSHAUSEN 08785105910 ME",
+            "predecessorDate": "2017-05-19"
+          }
+        ],
+        "reorganizations": [],
+        "legalNatureCode": "206"
+      },
+      "QSAReport": {
+        "companyData": {
+          "socialCapitalValue": 5000.0,
+          "accomplishedValue": 5000.0,
+          "informationUpdateDate": "2025-11-11",
+          "countryOrigin": "BRASIL",
+          "controlType": "PRIVADO",
+          "nature": "FECHADO"
+        },
+        "partnerCompleteReport": {
+          "partnersList": [
+            {
+              "documentType": "CPF",
+              "documentId": "08785105910",
+              "name": "SABRINA MORAES BOEGERSHAUSEN",
+              "status": "ATIVA",
+              "statusCode": "2",
+              "sinceDate": "2013-06-08",
+              "restrictionSign": true,
+              "documentConsistency": true,
+              "capitalTotalValue": 100.0,
+              "capitalVoterValue": 0.0
+            }
+          ]
+        },
+        "directorCompleteReport": {
+          "directorsList": [
+            {
+              "documentType": "CPF",
+              "documentId": "08785105910",
+              "name": "SABRINA MORAES BOEGERSHAUSEN",
+              "status": "ATIVA",
+              "statusCode": "2",
+              "role": "ADMINISTRADOR",
+              "sinceDate": "2023-07-14",
+              "restrictionSign": true,
+              "documentConsistency": true,
+              "informationUpdateDate": "2025-02-12"
+            }
+          ]
+        }
+      },
+      "negativeData": {
+        "pefin": {
+          "summary": {
+            "count": 0,
+            "balance": 0.0
+          }
+        },
+        "refin": {
+          "summary": {
+            "count": 0,
+            "balance": 0.0
+          }
+        },
+        "collectionRecords": {
+          "summary": {
+            "count": 0,
+            "balance": 0.0
+          }
+        },
+        "check": {
+          "summary": {
+            "count": 0,
+            "balance": 0.0
+          }
+        },
+        "notary": {
+          "notaryResponse": [
+            {
+              "occurrenceDate": "2026-03-25",
+              "inclusionDate": "2026-04-14",
+              "amount": 4666.66,
+              "officeNumber": "02",
+              "city": "JOINVILLE",
+              "federalUnit": "SC",
+              "dispute": {
+                "disputeIndicativeFlag": false
+              },
+              "cadus": "A470332942"
+            },
+            {
+              "occurrenceDate": "2026-02-25",
+              "inclusionDate": "2026-03-14",
+              "amount": 4666.66,
+              "officeNumber": "02",
+              "city": "JOINVILLE",
+              "federalUnit": "SC",
+              "dispute": {
+                "disputeIndicativeFlag": false
+              },
+              "cadus": "A467656222"
+            },
+            {
+              "occurrenceDate": "2026-01-25",
+              "inclusionDate": "2026-02-10",
+              "amount": 4666.66,
+              "officeNumber": "01",
+              "city": "JOINVILLE",
+              "federalUnit": "SC",
+              "dispute": {
+                "disputeIndicativeFlag": false
+              },
+              "cadus": "A464395091"
+            },
+            {
+              "occurrenceDate": "2026-01-18",
+              "inclusionDate": "2026-02-10",
+              "amount": 1400.0,
+              "officeNumber": "03",
+              "city": "JOINVILLE",
+              "federalUnit": "SC",
+              "dispute": {
+                "disputeIndicativeFlag": false
+              },
+              "cadus": "A464376580"
+            },
+            {
+              "occurrenceDate": "2025-12-25",
+              "inclusionDate": "2026-01-14",
+              "amount": 4666.66,
+              "officeNumber": "01",
+              "city": "JOINVILLE",
+              "federalUnit": "SC",
+              "dispute": {
+                "disputeIndicativeFlag": false
+              },
+              "cadus": "A461444255"
+            }
+          ],
+          "summary": {
+            "firstOccurrence": "2024-01-18",
+            "lastOccurrence": "2026-03-25",
+            "count": 25,
+            "balance": 93683.82
+          }
+        }
+      },
+      "facts": {
+        "judgementFilings": {
+          "summary": {
+            "count": 0,
+            "balance": 0.0
+          }
+        },
+        "bankrupts": {
+          "summary": {
+            "count": 0,
+            "balance": 0.0
+          }
+        },
+        "inquiryCompanyResponse": {
+          "results": [
+            {
+              "occurrenceDate": "2026-04-19",
+              "companyName": "DGTEX COMERCIO DE SUPRIMENTOS E EQUIPAMENTOS LTDA - ME",
+              "companyDocumentId": "45024640000170",
+              "companyAlias": "DGTEX SUPRIMENTOS E EQUIPAMENTOS",
+              "daysQuantity": 4
+            },
+            {
+              "occurrenceDate": "2025-10-14",
+              "companyName": "ALTERNATIVA GRAVACOES SERIGRAFICAS LTDA",
+              "companyDocumentId": "00608623000141",
+              "companyAlias": "ALTERNATIVA",
+              "daysQuantity": 1
+            },
+            {
+              "occurrenceDate": "2025-08-26",
+              "companyName": "SUN SPECIAL COMERCIO E REPRESENTACAO LTDA",
+              "companyDocumentId": "05013910000122",
+              "companyAlias": "SUN SPECIAL",
+              "daysQuantity": 1
+            }
+          ],
+          "quantity": {
+            "actual": 1,
+            "historical": [
+              {
+                "inquiryDate": "2026-03",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2026-02",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2026-01",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-12",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-11",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-10",
+                "occurrences": 1
+              },
+              {
+                "inquiryDate": "2025-09",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-08",
+                "occurrences": 1
+              },
+              {
+                "inquiryDate": "2025-07",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-06",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-05",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-04",
+                "occurrences": 0
+              },
+              {
+                "inquiryDate": "2025-03",
+                "occurrences": 0
+              }
+            ]
+          }
+        }
+      },
+      "score": {
+        "score": 2,
+        "scoreModel": "HPJ8",
+        "defaultRate": "10000",
+        "message": "DEFAULT - CESTA DE EVENTOS RELEVANTES"
+      },
+      "negativeSummary": {},
+      "checkFilingsHistorical": {
+        "checkFilingsHistoricalResponse": []
+      }
+    }
+  ]
+}

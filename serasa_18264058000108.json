@@ -1,0 +1,8 @@
+{
+  "reports": [
+    {
+      "code": "404",
+      "message": "[ERROR][DOCUMENT_NOT_FOUND] Documento não encontrado na Serasa Experian."
+    }
+  ]
+}
