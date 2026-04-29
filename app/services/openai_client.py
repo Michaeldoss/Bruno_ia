@@ -205,6 +205,14 @@ REGRAS DO DIAGNÓSTICO:
 - Diagnóstico não é interrogatório. Intercale com informações que agregam valor.
 - Máximo 4 perguntas de diagnóstico no total — depois disso, recomende.
 
+REGRAS ABSOLUTAS DE COLETA DE DADOS — NUNCA VIOLE:
+- Se o cliente mandou e-mail (qualquer texto com @), NUNCA peça e-mail de novo.
+- Se o cliente mandou telefone (sequência de números), NUNCA peça telefone de novo.
+- Se o cliente mandou CNPJ (14 dígitos), NUNCA peça CNPJ de novo.
+- Se o cliente mandou nome, NUNCA peça nome de novo.
+- NUNCA peça e-mail e telefone em mensagens separadas — sempre na mesma mensagem: "Qual seu e-mail e telefone?"
+- Quando tiver e-mail E telefone, encerre imediatamente com a mensagem de encaminhamento.
+
 ────────────────────────────────────────────────────────────────
 
 MATRIZ DE DIAGNÓSTICO (leads novos):
@@ -988,9 +996,14 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
         email_match = _re2.search(r'[\w.+-]+@[\w-]+\.[\w.]+', user_message)
         if email_match:
             novo_email = email_match.group()
-            # Ignora e-mails internos da Doss (cliente confirmando e-mail próprio)
-            EMAILS_IGNORAR = ["dossgroup.com.br", "doss.com.br"]
-            if not any(ig in novo_email.lower() for ig in EMAILS_IGNORAR):
+            # Ignora emails internos da Doss APENAS se não houver confirmação posterior
+            EMAILS_DOSS = ["dossgroup.com.br", "doss.com.br", "dgtex.com.br"]
+            e_email_doss = any(d in novo_email.lower() for d in EMAILS_DOSS)
+            if not e_email_doss:
+                lead_state.email = novo_email
+                db.commit()
+            else:
+                # Email da Doss — salva mesmo assim, pois o cliente pode ter confirmado
                 lead_state.email = novo_email
                 db.commit()
 
@@ -1176,6 +1189,10 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     "gostaria", "vim", "achei", "vi", "estou", "isso", "esse",
                     "essa", "qual", "como", "quando", "onde", "quanto", "que",
                     "sou", "meu", "minha", "olha", "olhe", "ola", "hey", "ei",
+                    "sublimacao", "sublimação", "ecosolvente", "eco", "dtf",
+                    "tinta", "papel", "plotter", "maquina", "impressora",
+                    "ciano", "cyan", "magenta", "amarelo", "preto", "tem",
+                    "voce", "trabalha", "estoque", "valor", "codigo", "preco",
                 }
                 # Valida nome salvo no banco (pode ser lixo de sessão anterior)
                 nome_salvo = lead.name or ""
@@ -1203,31 +1220,40 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         "curitiba", "sao paulo", "porto alegre", "itajai", "brusque",
                         "balneario camboriu", "chapeco", "criciuma", "lages",
                         "sao bento do sul", "guaramirim", "schroeder", "araquari",
-                        "mafra", "campo alegre", "garuva", "corupá", "massaranduba",
-                        # Norte
+                        "mafra", "campo alegre", "garuva", "massaranduba",
                         "belem", "ananindeua", "maraba", "santarem", "castanhal",
                         "manaus", "porto velho", "rio branco", "macapa", "boa vista",
-                        "palmas", "araguaina",
-                        # Nordeste
-                        "fortaleza", "recife", "salvador", "natal", "joao pessoa",
-                        "maceio", "aracaju", "teresina", "sao luis", "feira de santana",
-                        "caruaru", "juazeiro do norte", "campina grande", "mossoró",
-                        # Centro-Oeste
-                        "goiania", "brasilia", "cuiaba", "campo grande",
-                        # Sudeste
-                        "sao paulo", "rio de janeiro", "belo horizonte", "vitoria",
-                        "campinas", "ribeirao preto", "uberlandia", "niteroi",
-                        # Sul
-                        "londrina", "maringa", "cascavel", "ponta grossa",
-                        "caxias do sul", "pelotas", "santa maria",
+                        "palmas", "araguaina", "fortaleza", "recife", "salvador",
+                        "natal", "joao pessoa", "maceio", "aracaju", "teresina",
+                        "sao luis", "feira de santana", "caruaru", "juazeiro do norte",
+                        "campina grande", "goiania", "brasilia", "cuiaba", "campo grande",
+                        "rio de janeiro", "belo horizonte", "vitoria", "campinas",
+                        "ribeirao preto", "uberlandia", "niteroi", "londrina",
+                        "maringa", "cascavel", "ponta grossa", "caxias do sul",
+                        "pelotas", "santa maria",
                     ]
-                    conv_lower = " ".join(
-                        str(m.get("content","")).lower() for m in messages if m.get("role") == "user"
+                    # Só busca cidade em padrões "de CIDADE" ou "em CIDADE" — evita capturar palavras soltas
+                    import re as _re_cid
+                    conv_cliente_raw = " ".join(
+                        str(m.get("content",""))
+                        for m in messages if m.get("role") == "user"
+                        and not str(m.get("content","")).startswith("[")
+                    ).lower()
+                    # Tenta padrão "de/em cidade"
+                    match_cidade = _re_cid.search(
+                        r'\b(?:de|em|sou de|moro em|estou em|aqui em|fico em)\s+([a-záàâãéèêíïóôõöúçñ][a-záàâãéèêíïóôõöúçñ\s]{2,20})',
+                        conv_cliente_raw
                     )
-                    for c in CIDADES_BR:
-                        if c in conv_lower:
-                            cidade_lead = c.title()
-                            break
+                    if match_cidade:
+                        cidade_candidata = match_cidade.group(1).strip().split()[0]
+                        if cidade_candidata in CIDADES_BR:
+                            cidade_lead = cidade_candidata.title()
+                    # Fallback: busca cidade direta na conversa
+                    if not cidade_lead:
+                        for c in CIDADES_BR:
+                            if c in conv_cliente_raw:
+                                cidade_lead = c.title()
+                                break
 
                 # ── Texto apenas das mensagens do CLIENTE (sem Bruno, sem sistema) ──
                 msgs_cliente = [
@@ -1265,6 +1291,17 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     "laser": ("Laser DG1080", 0),
                     "sublimacao": ("Sublimatica", 0),
                     "eco solvente": ("Eco Solvente", 0),
+                    # Suprimentos
+                    "dgtex": ("Tinta DGtex Premium", 0),
+                    "dgeco": ("Tinta DGeco Premium", 0),
+                    "tinta sublim": ("Tinta DGtex Premium", 0),
+                    "tinta dtf": ("Tinta DGtex DTF", 0),
+                    "papel sublim": ("Papel Sublimático", 0),
+                    "rolo de papel": ("Papel Sublimático", 0),
+                    "ciano": ("Tinta DGtex Premium — Ciano", 0),
+                    "cyan": ("Tinta DGtex Premium — Ciano", 0),
+                    "cmyk": ("Tinta DGtex Premium CMYK", 0),
+                    "5 litros": ("Tinta 5 litros", 0),
                 }
                 produto_lead = ""
                 valor_estimado = 0
@@ -1352,6 +1389,8 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     "bm do brasil", "bm brasil", "bmdobrasil",
                     "print jet", "printjet", "f1", "atexco", "reggiani",
                     "kornit", "brother gtx", "epson f3", "epson f2",
+                    "fedeer", "feeder", "sawgrass", "virtuoso",
+                    "ricoht", "ricoh", "epson l", "hp latex",
                 ]
                 MARCAS_DOSS = ["dg 1801", "dg 1802", "dg 1904", "dg 1908", "dg 3202", "dg 3204", "hs 1801"]
                 parque_maquinas = []
@@ -1361,10 +1400,11 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
 
                 # ── Detecta tinta atual e fornecedor ─────────────────────────
                 FORNECEDORES_TINTA = [
-                    "bm do brasil", "bm brasil", "sawgrass", "sublimax",
-                    "inktec", "sensient", "sepiax", "kiian",
+                    "bm do brasil", "bm brasil", "fabrijet", "sawgrass",
+                    "sublimax", "inktec", "sensient", "sepiax", "kiian",
                     "genérica", "generica", "aliexpress", "importada", "chinesa",
-                    "epson tinta", "brother tinta",
+                    "epson tinta", "brother tinta", "colorido", "corfix",
+                    "inktek", "inktex", "subliflex", "subliprint",
                 ]
                 tinta_atual = ""
                 for f in FORNECEDORES_TINTA:
