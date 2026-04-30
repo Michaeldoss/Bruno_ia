@@ -20,32 +20,27 @@ class UniplusClient:
         return self.auth_code not in ("stub", "", None) and self.account not in ("stub", "", None)
 
     def _get_token_sync(self) -> Optional[str]:
-        """
-        Obtem token OAuth2 do Uniplus.
-        Endpoint: POST /oauth/token
-        Auth: Basic ${codigo_de_autorizacao}
-        """
         if not self._is_configured():
             return None
 
-        # Reutiliza token se ainda valido (margem de 5 minutos)
         if self._token and time.time() < self._token_expires - 300:
             return self._token
 
         try:
             url = self.base_url + "/oauth/token"
-            headers = {
-                "Authorization": f"Basic {self.auth_code}",
-                "Content-Type": "application/x-www-form-urlencoded"
-            }
-            data = "grant_type=client_credentials&scope=public-api"
+            access_key = getattr(settings, "UNIPLUS_ACCESS_KEY", "") or ""
 
-            r = requests.post(url, headers=headers, data=data, timeout=8)
+            # Usa auth= igual ao teste que funcionou
+            r = requests.post(
+                url,
+                data={"grant_type": "client_credentials", "scope": "public-api"},
+                auth=(self.account, access_key),
+                timeout=8
+            )
 
             if r.status_code == 200:
                 token_data = r.json()
                 self._token = token_data.get("access_token")
-                # Token valido por 60 minutos
                 self._token_expires = time.time() + 3600
                 logger.info("Uniplus: token OAuth2 obtido com sucesso")
                 return self._token
