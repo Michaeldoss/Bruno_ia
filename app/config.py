@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     UNIPLUS_ACCOUNT: str = "stub"
     UNIPLUS_ACCESS_KEY: str = "stub"
     UNIPLUS_AUTH_CODE: str = "stub"
-    UNIPLUS_BASE_URL: str = "https://vzan-getcard01.getcard.uniplusweb.com/api/rest"
+    UNIPLUS_BASE_URL: str = "https://vzan-getcard01.getcard.uniplusweb.com"
     GOOGLE_SHEET_ID: str = "stub"
     GOOGLE_SHEET_CSV_URL: str = "stub"
     GOOGLE_SHEET_SUPRIMENTOS_URL: str = "stub"
