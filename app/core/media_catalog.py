@@ -171,3 +171,18 @@ def find_media_for_message(text: str) -> dict | None:
             return MEDIA_CATALOG[key]
 
     return None
+
+def find_media_key_for_message(text: str):
+    """
+    Igual a find_media_for_message mas retorna (chave, mídia) ou None.
+    Usado para rastrear o que já foi enviado por conversa.
+    """
+    if not text:
+        return None
+    text_lower = text.lower()
+    sorted_keys = sorted(MEDIA_CATALOG.keys(), key=len, reverse=True)
+    for key in sorted_keys:
+        pattern = r"\b" + re.escape(key) + r"\b"
+        if re.search(pattern, text_lower):
+            return key, MEDIA_CATALOG[key]
+    return None
