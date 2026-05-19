@@ -8,18 +8,19 @@ Todos os tempos contados a partir da ÚLTIMA mensagem do cliente:
   Step 3 →   5h    → mostrar outro produto ou aprofundar conversa
   Step 4 →  24h    → reengajamento consultivo com perspectiva nova
   Step 5 →  48h    → última tentativa, direta e humana
-  Encerra →  72h   → fecha por inatividade (4 dias no total)
+  Encerra →  72h   → fecha por inatividade
 
 Regras:
 - Follow-ups APENAS dentro do horário comercial: 08:00-12:00 / 13:30-18:00
+- Horário baseado em Brasília (UTC-3) independente do servidor
 - Se o cliente responder, ciclo reinicia do zero
+- Cada step só dispara após intervalo mínimo desde o STEP ANTERIOR (evita cascata)
 - Cada mensagem é gerada pelo Claude Haiku com base no histórico real
-- Nunca repete o mesmo tipo de abordagem
 """
 
 import asyncio
 import logging
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 from anthropic import AsyncAnthropic
 
@@ -30,15 +31,31 @@ from app.services.twilio_client import twilio_service
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
+# ── Timezone Brasília ──────────────────────────────────────────────────────
+BRASILIA = timezone(timedelta(hours=-3))
+
+def agora_brasilia() -> datetime:
+    """Retorna datetime atual no horário de Brasília, sem timezone info."""
+    return datetime.now(BRASILIA).replace(tzinfo=None)
+
+def utcnow() -> datetime:
+    """Retorna datetime UTC atual para comparação com banco."""
+    return datetime.utcnow()
+
 # ── Horário comercial ──────────────────────────────────────────────────────
 JANELAS_COMERCIAIS = [
     (time(8, 0),   time(12, 0)),   # 08:00 - 12:00
     (time(13, 30), time(18, 0)),   # 13:30 - 18:00
 ]
 
-# ── Minutos desde a última mensagem do CLIENTE por step ───────────────────
+# ── Intervalos por step (em minutos desde última msg do CLIENTE) ───────────
 FOLLOWUP_MINUTOS = [30, 120, 300, 1440, 2880]   # 30min, 2h, 5h, 24h, 48h
-MINUTOS_FECHAR   = 4320                          # 72h após última msg = encerra
+
+# ── Intervalo mínimo entre steps (evita cascata em reinicializações) ───────
+# Cada step só dispara se passou pelo menos este tempo desde o step anterior
+INTERVALO_MINIMO_ENTRE_STEPS = 25  # minutos
+
+MINUTOS_FECHAR = 4320  # 72h após última msg = encerra
 
 # ── Cliente Anthropic ──────────────────────────────────────────────────────
 _anthropic = (
@@ -51,12 +68,13 @@ _anthropic = (
 # ── Helpers de horário ─────────────────────────────────────────────────────
 
 def esta_em_horario_comercial(agora: Optional[datetime] = None) -> bool:
-    t = (agora or datetime.now()).time()
+    """Verifica se está em horário comercial usando horário de Brasília."""
+    t = (agora or agora_brasilia()).time()
     return any(ini <= t <= fim for ini, fim in JANELAS_COMERCIAIS)
 
 
 def proxima_janela_comercial(agora: Optional[datetime] = None) -> datetime:
-    agora = agora or datetime.now()
+    agora = agora or agora_brasilia()
     t = agora.time()
     for ini, fim in JANELAS_COMERCIAIS:
         if t < ini:
@@ -64,14 +82,13 @@ def proxima_janela_comercial(agora: Optional[datetime] = None) -> datetime:
     return (agora + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
 
 
-# ── Instruções por step — cada um tem abordagem diferente ─────────────────
+# ── Instruções por step ────────────────────────────────────────────────────
 
 INSTRUCOES_POR_STEP = {
     1: """Step 1 — 30 minutos sem resposta.
 Tom: leve, natural, zero pressão.
 Objetivo: verificar se ficou alguma dúvida sem mencionar que o cliente sumiu.
 Formato: 1 pergunta direta relacionada ao que foi discutido.
-Exemplo de abordagem: retomar o último ponto da conversa com uma pergunta aberta.
 Máximo 2 linhas.""",
 
     2: """Step 2 — 2 horas sem resposta.
@@ -83,45 +100,42 @@ Máximo 3 linhas. Termina com CTA direto.""",
 
     3: """Step 3 — 5 horas sem resposta.
 Tom: consultivo, abre nova possibilidade.
-Objetivo: mostrar outro ângulo — pode ser um produto complementar, uma aplicação diferente, ou uma pergunta sobre o negócio dele que ainda não foi feita.
-Não force a venda. Abra uma conversa nova dentro do mesmo contexto.
+Objetivo: mostrar outro ângulo — produto complementar, aplicação diferente, ou pergunta sobre negócio ainda não feita.
+Não force a venda. Abra conversa nova dentro do mesmo contexto.
 Máximo 3 linhas. Termina com uma pergunta.""",
 
     4: """Step 4 — 24 horas sem resposta.
 Tom: humano, direto, sem pressão.
-Objetivo: reengajar com algo genuinamente útil — uma informação de mercado, um diferencial que não foi mencionado, ou uma pergunta sobre o momento dele.
-Não mencione que faz 24h. Escreva como se fosse uma mensagem natural de acompanhamento.
+Objetivo: reengajar com algo genuinamente útil.
+Não mencione que faz 24h. Escreva como mensagem natural de acompanhamento.
 Máximo 2 linhas.""",
 
     5: """Step 5 — 48 horas sem resposta. Última tentativa.
 Tom: direto, humano, sem desespero.
 Objetivo: perguntar de forma simples se ainda faz sentido conversar.
-Diga que vai deixar em aberto e que o consultor pode entrar em contato quando quiser.
-Não pressione. Não use palavras como "urgente" ou "última chance".
+Diga que vai deixar em aberto.
+Não use "urgente" ou "última chance".
 Máximo 2 linhas.""",
 }
 
-# Fallbacks offline (sem API)
 FALLBACKS = {
     1: "Ficou alguma dúvida sobre o que conversamos? Pode me perguntar.",
-    2: "Só um dado para você ter em mente: a maioria dos nossos clientes recupera o investimento em menos de 12 meses com a produção interna. Quer que eu simule para o seu volume?",
+    2: "Só um dado: a maioria dos nossos clientes recupera o investimento em menos de 12 meses com produção interna. Quer que eu simule para o seu volume?",
     3: "Além do equipamento que conversamos, temos outras soluções que podem complementar sua operação. Qual é o produto que você mais produz hoje?",
-    4: "Só passando para ver como você está. Se tiver alguma dúvida ou quiser retomar de onde paramos, estou aqui.",
+    4: "Só passando para ver como você está. Se quiser retomar de onde paramos, pode me chamar.",
     5: "Vou deixar em aberto. Quando quiser retomar, é só chamar — ou posso pedir para nosso consultor entrar em contato.",
 }
 
 
 async def _gerar_mensagem_followup(step: int, nome: str, produto: str, historico: str) -> str:
-    """Gera mensagem de follow-up personalizada via Claude Haiku."""
-
     if not _anthropic:
         msg = FALLBACKS.get(step, FALLBACKS[1])
         if nome and step in (4, 5):
             msg = f"{nome}, " + msg[0].lower() + msg[1:]
         return msg
 
-    instrucao  = INSTRUCOES_POR_STEP.get(step, INSTRUCOES_POR_STEP[1])
-    nome_str   = f"O nome do cliente é {nome}. " if nome else ""
+    instrucao   = INSTRUCOES_POR_STEP.get(step, INSTRUCOES_POR_STEP[1])
+    nome_str    = f"O nome do cliente é {nome}. " if nome else ""
     produto_str = f"O produto de interesse discutido foi {produto}. " if produto else ""
 
     system = (
@@ -161,18 +175,19 @@ async def _gerar_mensagem_followup(step: int, nome: str, produto: str, historico
 async def _processar_lead_followup(db, lead_state: LeadState):
     """Verifica e dispara follow-up para um lead específico."""
 
-    agora = datetime.utcnow()
+    # Usa UTC para comparação com banco (que salva em UTC)
+    agora_utc = utcnow()
 
     if lead_state.stage in ("closed", "followup_closed"):
         return
 
-    # Busca última mensagem REAL do cliente (ignora tags de sistema e campanha)
+    # Busca última mensagem real do cliente
     ultima_msg_cliente = (
         db.query(Conversation)
         .filter(
             Conversation.phone == lead_state.phone,
             Conversation.role == "user",
-            ~Conversation.content.like("[%"),  # ignora [CAMPANHA:], [SISTEMA:] etc
+            ~Conversation.content.like("[%"),
         )
         .order_by(Conversation.created_at.desc())
         .first()
@@ -181,10 +196,10 @@ async def _processar_lead_followup(db, lead_state: LeadState):
     if not ultima_msg_cliente:
         return
 
-    minutos_inativo = (agora - ultima_msg_cliente.created_at).total_seconds() / 60
+    minutos_inativo = (agora_utc - ultima_msg_cliente.created_at).total_seconds() / 60
     step_atual = lead_state.followup_step or 0
 
-    # Verifica se encerra (72h após última msg do cliente)
+    # Verifica se encerra (72h)
     if minutos_inativo >= MINUTOS_FECHAR and step_atual >= len(FOLLOWUP_MINUTOS):
         lead_state.stage = "followup_closed"
         db.commit()
@@ -195,20 +210,52 @@ async def _processar_lead_followup(db, lead_state: LeadState):
     if step_atual >= len(FOLLOWUP_MINUTOS):
         return
 
-    # Verifica se é hora do próximo step
+    # Verifica se é hora do próximo step pelo tempo de inatividade do cliente
     minutos_necessarios = FOLLOWUP_MINUTOS[step_atual]
     if minutos_inativo < minutos_necessarios:
         return
 
-    # Verifica horário comercial
-    agora_local = datetime.now()
-    if not esta_em_horario_comercial(agora_local):
-        logger.debug(f"[FOLLOWUP] Fora do horário comercial para {lead_state.phone}.")
+    # ── ANTI-CASCATA: verifica intervalo mínimo desde o último followup ───
+    # Evita que reinicializações do servidor disparem todos os steps de uma vez
+    if lead_state.followup_sent_at:
+        minutos_desde_ultimo_followup = (agora_utc - lead_state.followup_sent_at).total_seconds() / 60
+        if minutos_desde_ultimo_followup < INTERVALO_MINIMO_ENTRE_STEPS:
+            logger.debug(
+                f"[FOLLOWUP] Anti-cascata: {lead_state.phone} — "
+                f"último followup há {minutos_desde_ultimo_followup:.0f}min. Aguardando."
+            )
+            return
+
+    # ── HORÁRIO COMERCIAL — usa horário de Brasília ────────────────────────
+    if not esta_em_horario_comercial(agora_brasilia()):
+        logger.debug(f"[FOLLOWUP] Fora do horário comercial (Brasília) para {lead_state.phone}.")
         return
 
     # Busca dados do lead
     lead = db.query(Lead).filter(Lead.phone == lead_state.phone).first()
     nome = (lead.name or "") if lead else ""
+
+    # Busca nome nas primeiras mensagens se não estiver no banco
+    if not nome:
+        PALAVRAS_NAO_NOME = {
+            "oi","ola","opa","sim","nao","ok","tudo","bom","boa","olha","hey",
+            "sublimacao","dtf","plotter","maquina","tinta","impressora","eco",
+            "quero","tenho","preciso","busco","procuro","estou","sou","meu","vim",
+        }
+        primeiras = (
+            db.query(Conversation)
+            .filter(Conversation.phone == lead_state.phone, Conversation.role == "user")
+            .order_by(Conversation.created_at.asc())
+            .limit(6)
+            .all()
+        )
+        for msg in primeiras:
+            txt = msg.content.strip()
+            if 2 < len(txt) < 40 and not txt.startswith("["):
+                primeiro = txt.split()[0]
+                if len(primeiro) > 2 and primeiro.replace("-","").isalpha() and primeiro.lower() not in PALAVRAS_NAO_NOME:
+                    nome = primeiro.capitalize()
+                    break
 
     # Busca histórico filtrado
     historico_msgs = (
@@ -257,10 +304,10 @@ async def _processar_lead_followup(db, lead_state: LeadState):
     ))
 
     lead_state.followup_step    = step_numero
-    lead_state.followup_sent_at = agora
+    lead_state.followup_sent_at = agora_utc
     db.commit()
 
-    logger.info(f"[FOLLOWUP] Step {step_numero} enviado: {mensagem[:80]}...")
+    logger.info(f"[FOLLOWUP] Step {step_numero} enviado para {lead_state.phone}: {mensagem[:80]}...")
 
 
 async def _loop_followup():
