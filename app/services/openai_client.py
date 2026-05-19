@@ -555,6 +555,32 @@ PENSAMENTO HUNTER:
 
 CATALOGO TECNICO COMPLETO DOSS GROUP:
 
+MAPEAMENTO DE NOMES — TABELA vs MERCADO:
+A tabela de preços usa nomes técnicos internos. Quando o cliente pedir um modelo,
+use a tabela correta abaixo para buscar o preço:
+
+"DG 1801i" ou "1801"     = DG 1801/2 - UMA CABEÇA        (Sublimática/Eco)
+"DG 1802i" ou "1802"     = DG 1801/2 - DUAS CABEÇAS       (Sublimática/Eco)
+"DG 1904i" ou "1904"     = DG 1904 - QUATRO CABEÇAS
+"DG 1908i" ou "1908"     = DG 1908 - OITO CABEÇAS
+"DG 3202i" ou "3202"     = DG 3002 - DUAS CABEÇAS
+"DG 3204i" ou "3204"     = DG 3204 - QUATRO CABEÇAS
+"DG DTF TÊXTIL 3002"     = DTF 3002 - DUAS CABEÇAS
+"DG DTF TÊXTIL 6002"     = DTF 6002 - DUAS CABEÇAS
+"DG DTF UV 3002"         = DTF UV 3003 - TRÊS CABEÇAS
+"DG DTF UV 6002"         = DTF UV 6003 - TRÊS CABEÇAS
+"UV Plana" ou "Flatbed"  = FLATBED 9060
+
+REGRA: Quando o cliente mencionar qualquer nome acima, busque o equivalente
+na tabela de preços e cite o preço de lá. NUNCA diga que o modelo não existe.
+
+TECNOLOGIA vs PREÇO — MESMA MÁQUINA, PREÇOS DIFERENTES:
+O chassi DG 1801/2 tem preços diferentes por tecnologia:
+- Sublimática ou Eco Solvente: preço padrão (menor)
+- UV Flexível: preço superior (~R$20.000 a mais)
+Sempre pergunte a tecnologia desejada antes de citar preço do 1801/2.
+Se o cliente não especificar, cite o preço Sublimática/Eco como referência.
+
 REGRA GERAL: Nossas maquinas NAO tem corte integrado como Roland e Mimaki. Corte e feito por plotter de recorte separado (DG1351).
 
 --- ECO SOLVENTE / SUBLIMATICA (linha de impressao) ---
