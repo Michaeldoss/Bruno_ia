@@ -1,3 +1,4 @@
+from app.core.media_catalog import find_media_for_message, find_media_key_for_message
 from fastapi import APIRouter, Form, Request, BackgroundTasks, Response
 from twilio.twiml.messaging_response import MessagingResponse
 from app.services.twilio_client import twilio_service
