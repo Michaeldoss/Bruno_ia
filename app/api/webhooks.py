@@ -13,6 +13,9 @@ import asyncio
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+# Rastreia mídia já enviada por telefone — evita repetição na mesma conversa
+# { "5547999999999": {"1802", "dtf30"} }
+_media_sent: dict[str, set] = {}
 router = APIRouter()
 
 # ---------------------------------------------------------------------------
