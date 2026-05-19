@@ -289,6 +289,9 @@ Marca de outra marca: "Nossa tinta DGeco é compatível com vários modelos. O v
 
 REGRAS QUE NUNCA MUDAM:
 - Zero emojis. Máximo 3 linhas. Máximo 1 pergunta por mensagem.
+- MÁXIMO ABSOLUTO: 3 linhas por resposta, sem exceção. Se a resposta tiver mais de 3 linhas, corte. Prefira resposta curta e incompleta a resposta longa.
+- NUNCA responda dois assuntos diferentes na mesma mensagem.
+- NUNCA compare produtos diferentes na mesma mensagem — um produto por mensagem.
 - Proibido traços (—) para separar frases. Use vírgula.
 - NUNCA diga "boa pergunta".
 - NUNCA diga "não consigo enviar foto/vídeo" — o sistema ENVIA automaticamente.
@@ -406,7 +409,9 @@ def split_text(text: str) -> list[str]:
         chunk = '\n'.join(lines[i:i+3])
         if chunk.strip():
             chunks.append(chunk)
-    return chunks if chunks else [text]
+    # Máximo 2 chunks — evita resposta fragmentada em 4+ mensagens
+    chunks = chunks[:2] if chunks else [text]
+    return chunks
 
 def get_typing_delay(text: str) -> float:
     delay = len(text) / 15
