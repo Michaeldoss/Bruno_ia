@@ -1,0 +1,49 @@
+ARGUMENTOS TÉCNICOS DE TINTA — DOSS GROUP
+Use esses argumentos quando o cliente perguntar sobre tinta, comparar preço ou questionar qualidade.
+
+=== OS 4 PILARES DA TINTA DGECO / DGTEX ===
+
+1. ESTABILIDADE EM PRATELEIRA
+O que é: a tinta mantém composição uniforme do primeiro ao último ml, sem separação de fases ou sedimentação.
+Argumento: "Nossa tinta garante uniformidade do primeiro ao último ml. Tinta genérica sedimenta no frasco — isso entope o sistema de tinta e vai para o cabeçote."
+
+2. PRINTABILIDADE (FLUIDEZ CONTÍNUA)
+O que é: a tinta flui sem falhas por horas seguidas, sem necessidade de limpezas constantes.
+Argumento: "Com a tinta certa, você imprime o dia todo sem interrupção. Tinta de segunda linha causa falhas de jato que exigem limpezas constantes — isso consome tinta, tempo e desgasta o cabeçote."
+
+3. ESTABILIDADE EM MÁQUINA (RETOMADA)
+O que é: a máquina retoma a impressão normalmente após pausas (fim de semana, overnight).
+Argumento: "Liga a máquina na segunda-feira e sai imprimindo. Com tinta genérica, você passa 30 minutos fazendo limpeza antes de conseguir imprimir — isso são custos ocultos que não aparecem no preço por litro."
+
+4. FIDELIDADE DE COR
+O que é: o padrão de cor se mantém independente do lote ou data de fabricação.
+Argumento: "O trabalho que você faz hoje terá a mesma cor daqui a seis meses. Para quem trabalha com marca e identidade visual, isso é fundamental."
+
+=== ARGUMENTO DE CUSTO REAL ===
+
+Quando cliente diz "tinta genérica é mais barata":
+→ "O custo real não é o preço por litro — é quantos m² você tira por litro e quanto você gasta em manutenção. Tinta genérica pode custar R$ 20 a menos o litro e te custar R$ 2.000 em cabeçote danificado. Não vale o risco."
+
+→ "Nossa tinta foi desenvolvida especificamente para a cabeça i3200. A composição é ajustada para a tensão superficial ideal — isso prolonga a vida útil do cabeçote. Cabeçote novo custa entre R$ 800 e R$ 2.500 dependendo do modelo."
+
+=== ARGUMENTO DE GARANTIA ===
+
+"Cliente que usa tinta de terceiros perde a garantia do equipamento. Isso está em contrato. Não é política da Doss — é proteção para você: se o técnico chega e vê tinta genérica no sistema, não pode garantir que o problema não foi causado por ela."
+
+=== ABORDAGEM DE VENDA DE TINTA PARA MÁQUINA DE OUTRA MARCA ===
+
+"Você usa [marca] hoje. A DGeco/DGtex é compatível com vários modelos do mercado. Dependendo da sua máquina, posso verificar compatibilidade e te oferecer um custo por litro melhor do que você paga hoje — com a garantia de uma tinta que foi filtrada em 0,45 mícron, o que protege o cabeçote."
+
+=== COMPOSIÇÃO TÉCNICA (para clientes técnicos) ===
+
+Tinta sublimática usa corantes dispersos — partículas sólidas micronizadas entre 120 e 600 nanômetros.
+A DGtex passa por dois filtros: 1 mícron e depois 0,45 mícron.
+Isso garante que nenhuma partícula grande chegue ao cabeçote — que tem orifícios de impressão na casa dos mícrons.
+
+Tensão superficial levemente maior = tinta fica mais na superfície do papel = cores mais vibrantes na transferência + maior vida útil do cabeçote.
+
+=== MANUTENÇÃO PREVENTIVA ===
+
+"Recomendamos preventiva a cada 6 meses — cap, damper e sistema de tinta.
+Se houver falha na retomada após fim de semana, o problema quase sempre é vedação do cap ou damper ressecado, não a tinta.
+Nossa equipe técnica resolve remotamente em maioria dos casos."

@@ -1,0 +1,60 @@
+SCRIPTS DE OBJEÇÃO — DOSS GROUP
+Adapte naturalmente ao contexto da conversa. Nunca use palavra por palavra.
+
+=== PREÇO ===
+
+"Tá caro"
+→ "O investimento reflete a estabilidade da máquina. Uma máquina que para toda semana custa muito mais do que o valor que você economizou na compra. Qual é o volume que você precisa produzir?"
+
+"Achei mais barato em outro lugar"
+→ "Que fornecedor é esse? Qual modelo e qual preço? Pergunto porque às vezes é produto diferente ou sem suporte local. A Doss tem técnico fixo em SC e RS — isso tem valor quando a máquina para no meio da produção."
+
+"Não tenho esse orçamento agora"
+→ "Entendo. Com 40% de entrada e 10x sem juros, quanto ficaria por mês? Às vezes cabe melhor do que parece quando a gente coloca no papel."
+
+"Vou esperar uma promoção"
+→ "O preço que temos agora já é o melhor que conseguimos com as condições atuais de câmbio. E cada mês que você adia é um mês pagando para o concorrente fazer o que você poderia estar fazendo."
+
+=== DECISÃO ===
+
+"Preciso pensar"
+→ "Claro. O que especificamente você quer pensar mais? Às vezes tem uma dúvida específica que, se a gente resolver agora, já fica claro."
+
+"Vou falar com meu sócio"
+→ "Faz sentido. O que seu sócio vai querer saber? Me passa as dúvidas dele que eu respondo tudo agora, assim vocês chegam à conversa com as informações completas."
+
+"Preciso pesquisar mais"
+→ "Pesquisar é certo. O que você ainda não tem clareza? Eu posso te passar comparativo técnico agora mesmo."
+
+=== CONFIANÇA ===
+
+"Não conheço a Doss"
+→ "A Doss foi fundada por dois técnicos — Michael com 19 anos de carreira em plotter e Alan com 9. A empresa nasceu de quem conserta máquina, não de quem vende e terceiriza o suporte. Isso muda tudo quando você precisa de assistência."
+
+"Já tive problema com fornecedor antes"
+→ "Entendo. O que deu errado da última vez? Quero entender para te mostrar onde a Doss é diferente — ou ser honesto se não for."
+
+"Já ouvi falar mal"
+→ "Lamento que tenha chegado isso. Me conta o que ouviu? Quero poder te dar o outro lado da história, ou confirmar se há algo que precisamos melhorar."
+
+=== URGÊNCIA ===
+
+"Vou esperar o próximo ano"
+→ "Entendo. O que muda no próximo ano para você? Pergunto porque cada mês sem a máquina é receita que vai para o concorrente — e esse dinheiro não volta."
+
+"Não tenho urgência"
+→ "Quanto você está terceirizando hoje por mês? Esse valor é o que você está deixando de ganhar. Não é urgência — é matemática."
+
+"Posso fazer isso sozinho depois"
+→ "Pode sim. O que está te impedindo de começar agora? Se for só o capital, vamos ver uma simulação que caiba no seu fluxo."
+
+=== TÉCNICO ===
+
+"Não sei se vai funcionar para mim"
+→ "Já tivemos clientes na mesma situação que hoje estão com a produção rodando. Me conta seu caso específico — o que você produz e qual volume — que te mostro casos parecidos."
+
+"Tenho medo de não conseguir usar"
+→ "O treinamento é gratuito por 2 dias no seu estabelecimento. O técnico não sai de lá até você estar imprimindo com confiança. Não tem como ficar na mão."
+
+"Prefiro algo mais simples"
+→ "Me conta o que seria simples para você. A 1801i é a entrada de linha — uma cabeça, operação direta. Para começar, resolve sem complicar."
