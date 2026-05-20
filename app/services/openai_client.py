@@ -36,9 +36,11 @@ COMPLEX_TRIGGERS = [
     "algodão", "lona", "adesivo", "vinil", "poliéster", "rígido", "vidro", "madeira",
     "dtf", "uv", "impressora", "máquina", "tinta", "cabeçote",
     "dioxido", "dióxido", "sublimação", "ploter", "plotter",
+    "parcelar", "compra", "quero ver", "me manda",
+    "como funciona", "tem estoque", "ainda tenho duvida",
 ]
 SIMPLE_KEYWORDS = ["oi", "olá", "tudo bem", "bom dia", "boa tarde", "boa noite", "obrigado", "obrigada", "tchau", "ok", "certo", "entendido"]
-MIN_WORDS_FOR_SONNET = 15
+MIN_WORDS_FOR_SONNET = 6
 
 def choose_model(user_message: str) -> str:
     msg_lower = user_message.lower().strip()
