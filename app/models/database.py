@@ -8,16 +8,14 @@ settings = get_settings()
 # ---------------------------------------------------------------------------
 # Engine — suporta SQLite (local) e PostgreSQL (produção no Render)
 # ---------------------------------------------------------------------------
-# SQLite: connect_args necessário para evitar erro de thread
-# PostgreSQL: sem connect_args, mas precisa de pool_pre_ping para reconexão
 is_sqlite = "sqlite" in settings.DATABASE_URL.lower()
 
 engine = create_engine(
     settings.DATABASE_URL,
     connect_args={"check_same_thread": False} if is_sqlite else {},
-    pool_pre_ping=True,   # reconecta automaticamente se conexão cair
-    pool_size=5,          # conexões simultâneas (ignorado no SQLite)
-    max_overflow=10,      # conexões extras se pool estiver cheio
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=10,
 ) if not is_sqlite else create_engine(
     settings.DATABASE_URL,
     connect_args={"check_same_thread": False},
@@ -72,14 +70,14 @@ class LeadState(Base):
 
     # ── Dados coletados ────────────────────────────────────────────────────
     cnpj      = Column(String, nullable=True)
-    cnpj_data = Column(Text,   nullable=True)    # JSON com dados Serasa
+    cnpj_data = Column(Text,   nullable=True)
     email     = Column(String, nullable=True)
     telefone  = Column(String, nullable=True)
-    card_id   = Column(Integer, nullable=True)   # ID da oportunidade no Arcca
+    card_id   = Column(Integer, nullable=True)
 
     # ── Follow-up automático ───────────────────────────────────────────────
-    followup_step    = Column(Integer,  default=0)      # step atual (0 = não iniciado)
-    followup_sent_at = Column(DateTime, nullable=True)  # quando o último follow-up foi enviado
+    followup_step    = Column(Integer,  default=0)
+    followup_sent_at = Column(DateTime, nullable=True)
 
     # ── Timestamps ────────────────────────────────────────────────────────
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -87,17 +85,18 @@ class LeadState(Base):
                         onupdate=datetime.datetime.utcnow)
 
 
+class MediaSent(Base):
+    """Rastreia mídias já enviadas por conversa — persiste entre reinicializações."""
+    __tablename__ = "media_sent"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    phone       = Column(String, index=True)
+    product_key = Column(String)
+    created_at  = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Cria tabelas automaticamente se não existirem
 # No PostgreSQL isso é idempotente — não apaga dados existentes
 # ---------------------------------------------------------------------------
 Base.metadata.create_all(bind=engine)
-
-class MediaSent(Base):
-    """Rastreia mídias já enviadas por conversa — persiste entre reinicializações."""
-    __tablename__ = "media_sent"
-
-    id         = Column(Integer, primary_key=True, index=True)
-    phone      = Column(String, index=True)
-    product_key = Column(String)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
