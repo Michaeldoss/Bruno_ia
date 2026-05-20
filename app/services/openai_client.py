@@ -28,16 +28,79 @@ MODEL_HAIKU  = "claude-haiku-4-5-20251001"
 MODEL_SONNET = "claude-sonnet-4-6"
 
 COMPLEX_TRIGGERS = [
-    "preço", "valor", "orçamento", "cotação", "desconto",
-    "prazo", "entrega", "garantia", "parcelamento", "financiamento",
-    "comprar", "fechar", "negócio", "contrato", "proposta", "boleto",
-    "técnico", "técnica", "instalar", "instalação", "manutenção",
-    "defeito", "problema", "erro", "falha", "não funciona",
-    "algodão", "lona", "adesivo", "vinil", "poliéster", "rígido", "vidro", "madeira",
-    "dtf", "uv", "impressora", "máquina", "tinta", "cabeçote",
-    "dioxido", "dióxido", "sublimação", "ploter", "plotter",
-    "parcelar", "compra", "quero ver", "me manda",
-    "como funciona", "tem estoque", "ainda tenho duvida",
+    # Modelos e equipamentos
+    "1801", "1802", "1803", "1804", "1808",
+    "1903", "1904", "1905", "1908",
+    "3002", "3202", "3204", "6002", "6004",
+    "3003", "6003", "9060",
+    "dtf", "uv", "eco", "sublim", "plotter", "ploter",
+    "impressora", "máquina", "maquina", "equipamento",
+    "laser", "fiber", "flatbed", "cabeçote", "cabeçote",
+    "hs18", "dg18", "dg32", "dg19",
+
+    # Tintas e insumos
+    "tinta", "dgeco", "dgtex", "dguv", "suprimento",
+    "cabeça", "cleaner", "bulk", "litro", "galão",
+    "ciano", "magenta", "amarelo", "preto", "branco",
+    "verniz", "primer",
+
+    # Materiais e aplicações
+    "algodão", "poliéster", "poliester", "lona", "banner",
+    "adesivo", "vinil", "vinyl", "rígido", "rigido",
+    "vidro", "madeira", "madeira", "metal", "acrílico",
+    "acrilico", "couro", "tecido", "malha", "camiseta",
+    "uniforme", "brinde", "squeeze", "caneca",
+    "papel", "transfer",
+
+    # Tecnologias
+    "sublimação", "sublimacao", "eco solvente",
+    "têxtil", "textil", "corte", "recorte",
+
+    # Comercial
+    "preço", "preco", "valor", "orçamento", "orcamento",
+    "cotação", "cotacao", "desconto", "promoção", "promocao",
+    "parcelar", "parcelamento", "financiamento", "financiar",
+    "entrada", "boleto", "cartão", "cartao", "pix",
+    "comprar", "compra", "fechar", "contrato", "proposta",
+    "negócio", "negocio", "investimento", "custo",
+    "faturamento", "lucro", "retorno", "payback",
+    "à vista", "a vista", "condição", "condicao",
+
+    # Logística e pós-venda
+    "entrega", "prazo", "frete", "envio", "instalação",
+    "instalacao", "treinamento", "garantia", "assistência",
+    "assistencia", "suporte", "manutenção", "manutencao",
+    "peça", "peca", "reparo", "conserto",
+
+    # Intenção de compra
+    "quero", "preciso", "gostaria", "tenho interesse",
+    "me interessa", "quero ver", "me manda", "me envia",
+    "me fala", "me conta", "pode me", "como faço",
+    "como funciona", "como é", "como e",
+
+    # Contexto de negócio
+    "gráfica", "grafica", "empresa", "negócio", "negocio",
+    "produção", "producao", "produzir", "trabalho",
+    "cliente", "pedido", "volume", "demanda",
+    "terceirizo", "terceirizar", "tenho", "uso", "utilizo",
+
+    # Comparação e dúvida
+    "diferença", "diferenca", "comparar", "melhor",
+    "dúvida", "duvida", "opção", "opcao", "opções",
+    "qual modelo", "qual maquina", "qual máquina",
+    "ainda", "pensei", "analisei", "pesquisei",
+    "concorrente", "outra marca", "roland", "epson",
+    "mimaki", "mutoh", "jinka",
+
+    # Técnico
+    "velocidade", "resolução", "resolucao", "largura",
+    "passada", "m2", "m²", "metro", "metros",
+    "produtividade", "capacidade",
+
+    # Outros sinais de conversa real
+    "sim", "não", "nao", "talvez", "depende",
+    "então", "entao", "mas", "porém", "porem",
+    "só que", "so que", "só", "só preciso",
 ]
 SIMPLE_KEYWORDS = ["oi", "olá", "tudo bem", "bom dia", "boa tarde", "boa noite", "obrigado", "obrigada", "tchau", "ok", "certo", "entendido"]
 MIN_WORDS_FOR_SONNET = 6
