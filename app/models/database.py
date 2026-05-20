@@ -92,3 +92,12 @@ class LeadState(Base):
 # No PostgreSQL isso é idempotente — não apaga dados existentes
 # ---------------------------------------------------------------------------
 Base.metadata.create_all(bind=engine)
+
+class MediaSent(Base):
+    """Rastreia mídias já enviadas por conversa — persiste entre reinicializações."""
+    __tablename__ = "media_sent"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    phone      = Column(String, index=True)
+    product_key = Column(String)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
