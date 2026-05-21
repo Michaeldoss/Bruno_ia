@@ -27,98 +27,33 @@ logger = logging.getLogger(__name__)
 MODEL_HAIKU  = "claude-haiku-4-5-20251001"
 MODEL_SONNET = "claude-sonnet-4-6"
 
-COMPLEX_TRIGGERS = [
-    # Modelos e equipamentos
-    "1801", "1802", "1803", "1804", "1808",
-    "1903", "1904", "1905", "1908",
-    "3002", "3202", "3204", "6002", "6004",
-    "3003", "6003", "9060",
-    "dtf", "uv", "eco", "sublim", "plotter", "ploter",
-    "impressora", "máquina", "maquina", "equipamento",
-    "laser", "fiber", "flatbed", "cabeçote", "cabeçote",
-    "hs18", "dg18", "dg32", "dg19",
-
-    # Tintas e insumos
-    "tinta", "dgeco", "dgtex", "dguv", "suprimento",
-    "cabeça", "cleaner", "bulk", "litro", "galão",
-    "ciano", "magenta", "amarelo", "preto", "branco",
-    "verniz", "primer",
-
-    # Materiais e aplicações
-    "algodão", "poliéster", "poliester", "lona", "banner",
-    "adesivo", "vinil", "vinyl", "rígido", "rigido",
-    "vidro", "madeira", "madeira", "metal", "acrílico",
-    "acrilico", "couro", "tecido", "malha", "camiseta",
-    "uniforme", "brinde", "squeeze", "caneca",
-    "papel", "transfer",
-
-    # Tecnologias
-    "sublimação", "sublimacao", "eco solvente",
-    "têxtil", "textil", "corte", "recorte",
-
-    # Comercial
-    "preço", "preco", "valor", "orçamento", "orcamento",
-    "cotação", "cotacao", "desconto", "promoção", "promocao",
-    "parcelar", "parcelamento", "financiamento", "financiar",
-    "entrada", "boleto", "cartão", "cartao", "pix",
-    "comprar", "compra", "fechar", "contrato", "proposta",
-    "negócio", "negocio", "investimento", "custo",
-    "faturamento", "lucro", "retorno", "payback",
-    "à vista", "a vista", "condição", "condicao",
-
-    # Logística e pós-venda
-    "entrega", "prazo", "frete", "envio", "instalação",
-    "instalacao", "treinamento", "garantia", "assistência",
-    "assistencia", "suporte", "manutenção", "manutencao",
-    "peça", "peca", "reparo", "conserto",
-
-    # Intenção de compra
-    "quero", "preciso", "gostaria", "tenho interesse",
-    "me interessa", "quero ver", "me manda", "me envia",
-    "me fala", "me conta", "pode me", "como faço",
-    "como funciona", "como é", "como e",
-
-    # Contexto de negócio
-    "gráfica", "grafica", "empresa", "negócio", "negocio",
-    "produção", "producao", "produzir", "trabalho",
-    "cliente", "pedido", "volume", "demanda",
-    "terceirizo", "terceirizar", "tenho", "uso", "utilizo",
-
-    # Comparação e dúvida
-    "diferença", "diferenca", "comparar", "melhor",
-    "dúvida", "duvida", "opção", "opcao", "opções",
-    "qual modelo", "qual maquina", "qual máquina",
-    "ainda", "pensei", "analisei", "pesquisei",
-    "concorrente", "outra marca", "roland", "epson",
-    "mimaki", "mutoh", "jinka",
-
-    # Técnico
-    "velocidade", "resolução", "resolucao", "largura",
-    "passada", "m2", "m²", "metro", "metros",
-    "produtividade", "capacidade",
-
-    # Outros sinais de conversa real
-    "sim", "não", "nao", "talvez", "depende",
-    "então", "entao", "mas", "porém", "porem",
-    "só que", "so que", "só", "só preciso",
+# ---------------------------------------------------------------------------
+# Roteamento simplificado:
+# - Tem histórico → sempre Sonnet (mantém contexto da conversa)
+# - Primeira mensagem + saudação pura → Haiku (barato para "oi", "bom dia")
+# - Qualquer outro caso → Sonnet
+# ---------------------------------------------------------------------------
+SIMPLE_KEYWORDS = [
+    "oi", "olá", "ola", "tudo bem", "tudo bom",
+    "bom dia", "boa tarde", "boa noite",
+    "obrigado", "obrigada", "tchau", "até mais", "ate mais"
 ]
-SIMPLE_KEYWORDS = ["oi", "olá", "tudo bem", "bom dia", "boa tarde", "boa noite", "obrigado", "obrigada", "tchau", "ok", "certo", "entendido"]
-MIN_WORDS_FOR_SONNET = 6
 
-def choose_model(user_message: str) -> str:
+def choose_model(user_message: str, historico_count: int = 0) -> str:
+    # Conversa em andamento = sempre Sonnet
+    if historico_count > 0:
+        logger.info("Roteamento: SONNET (histórico existente)")
+        return MODEL_SONNET
+
+    # Primeira mensagem: só Haiku se for saudação pura de até 4 palavras
     msg_lower = user_message.lower().strip()
     words = msg_lower.split()
     if len(words) <= 4 and any(kw in msg_lower for kw in SIMPLE_KEYWORDS):
-        logger.info("Roteamento: HAIKU (saudação simples)")
+        logger.info("Roteamento: HAIKU (saudação inicial)")
         return MODEL_HAIKU
-    if any(trigger in msg_lower for trigger in COMPLEX_TRIGGERS):
-        logger.info("Roteamento: SONNET (gatilho complexo)")
-        return MODEL_SONNET
-    if len(words) >= MIN_WORDS_FOR_SONNET:
-        logger.info("Roteamento: SONNET (mensagem longa)")
-        return MODEL_SONNET
-    logger.info("Roteamento: HAIKU (mensagem curta)")
-    return MODEL_HAIKU
+
+    logger.info("Roteamento: SONNET (primeira mensagem complexa)")
+    return MODEL_SONNET
 
 
 def load_knowledge_base(docs_dir: str) -> str:
@@ -157,7 +92,7 @@ DNA_SALES_TEXT = load_dna_sales(DOCS_DIR)
 
 # ---------------------------------------------------------------------------
 # System prompt HAIKU — mínimo, ~300 tokens
-# Só para saudações simples. Não carrega catálogo nem docs.
+# Só para saudações simples na primeira mensagem.
 # ---------------------------------------------------------------------------
 SYSTEM_PROMPT_HAIKU = """Você é o BRUNO, Consultor Comercial Sênior da Doss Group, empresa de equipamentos de impressão digital em Joinville/SC.
 
@@ -209,11 +144,12 @@ REGRA 5 — NUNCA REPITA DADO QUE O CLIENTE JÁ DEU
 Leia o histórico antes de perguntar qualquer coisa.
 Nome, cidade, CNPJ, email, telefone — se já foi dado, nunca peça de novo.
 
-REGRA 5B — EXECUÇÃO IMEDIATA POR NÚMERO DE MODELO:
-Se o cliente mandar APENAS um número de modelo (ex: "1802", "3002", "1904"),
-EXECUTE imediatamente: dê as specs do modelo + CTA.
+REGRA 5B — PRODUTO ATIVO É O ÚLTIMO QUE O CLIENTE CONFIRMOU
+Quando o cliente mencionar um modelo (ex: "1802", "3002"), esse É o produto ativo até ele mudar.
+Se o cliente mandar APENAS um número de modelo, EXECUTE imediatamente: dê specs + CTA.
 NUNCA pergunte "era esse mesmo?", "você confirma?", "era esse que queria?".
-O número é confirmação suficiente. Age como se o cliente tivesse dito "quero saber tudo sobre a 1802i".
+NUNCA volte para produto anterior sem o cliente pedir.
+NUNCA troque de produto no meio da conversa por iniciativa própria.
 
 SPECS CORRETAS — MEMORIZE:
 DG 1801i = 1 cabeça i3200 | R$58.900
@@ -494,7 +430,6 @@ def split_text(text: str) -> list[str]:
         chunk = '\n'.join(lines[i:i+3])
         if chunk.strip():
             chunks.append(chunk)
-    # Máximo 2 chunks — evita resposta fragmentada em 4+ mensagens
     chunks = chunks[:2] if chunks else [text]
     return chunks
 
@@ -700,12 +635,12 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     lead_state.telefone = tel_match.group().strip()
                     db.commit()
 
-        # ── Histórico — 20 mensagens (reduzido de 40) ─────────────────────
+        # ── Histórico — 40 mensagens (restaurado de 20) ───────────────────
         raw_history = (
             db.query(Conversation)
             .filter(Conversation.phone == phone)
             .order_by(Conversation.created_at.asc())
-            .limit(20)
+            .limit(40)
             .all()
         )
 
@@ -768,8 +703,8 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout Uniplus '{qw}'")
 
-        # ── Decide modelo ANTES de montar o prompt ────────────────────────
-        model = choose_model(user_message)
+        # ── Decide modelo com historico_count ─────────────────────────────
+        model = choose_model(user_message, historico_count)
 
         # ── Tabela de preços só para Sonnet ───────────────────────────────
         if model == MODEL_SONNET:
@@ -803,7 +738,7 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
         if campanha_ativa and get_contexto_campanha(campanha_ativa):
             system_dinamico += f"\n\n{get_contexto_campanha(campanha_ativa)}"
 
-        # ── Cache na parte estática — economiza ~65% do custo de input ────
+        # ── Cache na parte estática ────────────────────────────────────────
         system_parts = [
             {
                 "type": "text",
