@@ -4,11 +4,12 @@ from app.services.twilio_client import twilio_service
 from app.services.openai_client import process_message_with_assistant, create_thread, transcribe_audio, get_typing_delay
 from app.services.finance_service import finance_service
 from app.services.buffer_service import message_buffer
-from app.core.media_catalog import find_media_key_for_message
+from app.core.media_catalog import find_media_key_for_message, MEDIA_CATALOG
 from app.services.followup_service import resetar_followup
-from app.models.database import SessionLocal, Lead, MediaSent
+from app.models.database import SessionLocal, Lead, MediaSent, Conversation
 import logging
 import asyncio
+import re
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,27 @@ def _is_duplicate(message_sid: str) -> bool:
     if len(_processed_sids) > 1000:
         _processed_sids.clear()
     return False
+
+
+def find_all_media_for_text(text: str) -> list:
+    """
+    Retorna TODOS os produtos encontrados no texto, sem parar no primeiro.
+    Retorna lista de (product_key, media_dict).
+    """
+    if not text:
+        return []
+    text_lower = text.lower()
+    sorted_keys = sorted(MEDIA_CATALOG.keys(), key=len, reverse=True)
+    found = {}
+    for key in sorted_keys:
+        pattern = r"\b" + re.escape(key) + r"\b"
+        if re.search(pattern, text_lower):
+            media = MEDIA_CATALOG[key]
+            # Usa a URL do vídeo como identificador único do produto
+            product_id = media.get("video") or media.get("image")
+            if product_id not in found:
+                found[product_id] = (key, media)
+    return list(found.values())
 
 
 @router.post("/twils")
@@ -107,37 +129,50 @@ async def handle_async_response(
             await twilio_service.send_whatsapp_message(phone, chunk)
             first_message = False
 
-        # ── Envio de mídia — controle persistente no PostgreSQL ───────────
-        # Detecta produto na mensagem do CLIENTE ou na RESPOSTA DO BRUNO
-        # Persiste no banco — não perde entre reinicializações do servidor
+        # ── Envio de mídia — suporte a múltiplos produtos ─────────────────
+        # 1. Busca na mensagem atual (cliente + resposta Bruno)
         texto_combinado = (user_message or "") + " " + " ".join(response_chunks)
-        resultado_midia = find_media_key_for_message(texto_combinado)
+        resultados = find_all_media_for_text(texto_combinado)
 
-        if resultado_midia:
-            product_key, media = resultado_midia
+        # 2. Se não achou nada, busca no histórico recente das últimas 10 mensagens
+        if not resultados:
+            ultimas = (
+                db.query(Conversation)
+                .filter(Conversation.phone == phone)
+                .order_by(Conversation.created_at.desc())
+                .limit(10)
+                .all()
+            )
+            historico_texto = " ".join(m.content for m in ultimas if m.content)
+            resultados = find_all_media_for_text(historico_texto)
+
+        # 3. Envia mídia de cada produto encontrado — apenas os ainda não enviados
+        if resultados:
             db_media = SessionLocal()
             try:
-                ja_enviou = db_media.query(MediaSent).filter(
-                    MediaSent.phone == phone,
-                    MediaSent.product_key == product_key
-                ).first()
+                for product_key, media in resultados:
+                    ja_enviou = db_media.query(MediaSent).filter(
+                        MediaSent.phone == phone,
+                        MediaSent.product_key == product_key
+                    ).first()
 
-                if not ja_enviou:
-                    logger.info(f"[MÍDIA] Enviando '{product_key}' para {phone}")
-                    await asyncio.sleep(2.0)
-
-                    if media.get("image"):
-                        await twilio_service.send_whatsapp_message(phone, media_url=media["image"])
+                    if not ja_enviou:
+                        logger.info(f"[MÍDIA] Enviando '{product_key}' para {phone}")
                         await asyncio.sleep(2.0)
 
-                    if media.get("video"):
-                        await twilio_service.send_whatsapp_message(phone, media_url=media["video"])
+                        if media.get("image"):
+                            await twilio_service.send_whatsapp_message(phone, media_url=media["image"])
+                            await asyncio.sleep(2.0)
 
-                    db_media.add(MediaSent(phone=phone, product_key=product_key))
-                    db_media.commit()
-                    logger.info(f"[MÍDIA] '{product_key}' registrado no banco para {phone}")
-                else:
-                    logger.info(f"[MÍDIA] '{product_key}' já enviado para {phone}. Ignorando.")
+                        if media.get("video"):
+                            await twilio_service.send_whatsapp_message(phone, media_url=media["video"])
+                            await asyncio.sleep(2.0)
+
+                        db_media.add(MediaSent(phone=phone, product_key=product_key))
+                        db_media.commit()
+                        logger.info(f"[MÍDIA] '{product_key}' registrado no banco para {phone}")
+                    else:
+                        logger.info(f"[MÍDIA] '{product_key}' já enviado para {phone}. Ignorando.")
             except Exception as e:
                 logger.error(f"[MÍDIA] Erro ao controlar mídia: {e}")
             finally:
