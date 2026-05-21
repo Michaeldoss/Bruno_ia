@@ -9,6 +9,9 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import re
 
+from app.api.reset_router import router as reset_router
+app.include_router(reset_router)
+
 settings = get_settings()
 
 
