@@ -7,8 +7,6 @@ from app.services.followup_service import start_followup_service
 from app.models.database import SessionLocal, Conversation, Lead, LeadState
 from datetime import datetime, timedelta
 from collections import defaultdict
-from app.api.reset_router import router as reset_router
-app.include_router(reset_router)
 import re
 
 settings = get_settings()
@@ -26,6 +24,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from app.api.reset_router import router as reset_router
+app.include_router(reset_router)
 
 @app.get("/")
 def health_check():
