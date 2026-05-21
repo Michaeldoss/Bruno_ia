@@ -15,8 +15,8 @@ def reset_lead(phone: str, token: str = ""):
     db.close()
     return {"ok": f"{phone} resetado"}
 
-@router.get("/listar")
-def listar_leads(token: str = ""):
+@router.get("/lista-phones")
+def lista_phones(token: str = ""):
     if token != "doss2025":
         return {"error": "não autorizado"}
     db = SessionLocal()
@@ -24,4 +24,3 @@ def listar_leads(token: str = ""):
     result = [{"phone": l.phone, "name": l.name} for l in leads]
     db.close()
     return result
-    
