@@ -14,3 +14,14 @@ def reset_lead(phone: str, token: str = ""):
     db.commit()
     db.close()
     return {"ok": f"{phone} resetado"}
+
+@router.get("/listar")
+def listar_leads(token: str = ""):
+    if token != "doss2025":
+        return {"error": "não autorizado"}
+    db = SessionLocal()
+    leads = db.query(Lead).all()
+    result = [{"phone": l.phone, "name": l.name} for l in leads]
+    db.close()
+    return result
+    
