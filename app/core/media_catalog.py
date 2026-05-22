@@ -3,10 +3,9 @@ import re
 # ─────────────────────────────────────────────────────────────────────────────
 # Catálogo de mídias Doss Group (Cloudinary)
 # Vídeos com compressão automática: q_auto,vc_h264,br_800k
-# Garante que todos fiquem abaixo do limite de 16MB do WhatsApp/Twilio
 # ─────────────────────────────────────────────────────────────────────────────
 
-_C = "q_auto,vc_h264,br_800k"  # parâmetros de compressão Cloudinary
+_C = "q_auto,vc_h264,br_800k"
 
 _PRODUCTS = {
     "1801": {
@@ -55,98 +54,165 @@ _PRODUCTS = {
     },
 }
 
-# Aliases: texto da conversa → chave do produto
 _ALIASES = {
     # ── 1801 ──────────────────────────────────────────────────────────────────
-    "1801":               "1801",
-    "dg 1801":            "1801",
-    "hs 1801":            "1801",
-    "dg1801":             "1801",
-    "hs1801":             "1801",
-    "plotter 1801":       "1801",
+    "1801":                    "1801",
+    "1801i":                   "1801",
+    "dg 1801":                 "1801",
+    "dg 1801i":                "1801",
+    "dg1801":                  "1801",
+    "dg1801i":                 "1801",
+    "hs 1801":                 "1801",
+    "hs 1801i":                "1801",
+    "hs1801":                  "1801",
+    "hs1801i":                 "1801",
+    "plotter 1801":            "1801",
+    "plotter 1801i":           "1801",
+    "sublimática":             "1801",
+    "sublimatica":             "1801",
+    "sublimacao":              "1801",
+    "sublimação":              "1801",
+    "eco solvente":            "1801",
+    "ecosolvente":             "1801",
+    "uma cabeça":              "1801",
+    "uma cabeca":              "1801",
 
-    # ── 1802 / 1801-2 ─────────────────────────────────────────────────────────
-    "1802":               "1802",
-    "1801/2":             "1802",
-    "1801 2":             "1802",
-    "dg 1802":            "1802",
-    "dg1802":             "1802",
-    "plotter 1802":       "1802",
+    # ── 1802 ──────────────────────────────────────────────────────────────────
+    "1802":                    "1802",
+    "1802i":                   "1802",
+    "1801/2":                  "1802",
+    "1801 2":                  "1802",
+    "dg 1802":                 "1802",
+    "dg 1802i":                "1802",
+    "dg1802":                  "1802",
+    "dg1802i":                 "1802",
+    "plotter 1802":            "1802",
+    "plotter 1802i":           "1802",
+    "duas cabeças sublimática":"1802",
+    "duas cabecas sublimatica":"1802",
 
     # ── 1902 ──────────────────────────────────────────────────────────────────
-    "1902":               "1902",
-    "dg 1902":            "1902",
-    "dg1902":             "1902",
-    "hs 1902":            "1902",
-    "hs1902":             "1902",
-    "plotter 1902":       "1902",
+    "1902":                    "1902",
+    "1902i":                   "1902",
+    "dg 1902":                 "1902",
+    "dg 1902i":                "1902",
+    "dg1902":                  "1902",
+    "dg1902i":                 "1902",
+    "hs 1902":                 "1902",
+    "hs 1902i":                "1902",
+    "hs1902":                  "1902",
+    "hs1902i":                 "1902",
+    "plotter 1902":            "1902",
+    "plotter 1902i":           "1902",
 
     # ── 1904 ──────────────────────────────────────────────────────────────────
-    "1904":               "1904",
-    "dg 1904":            "1904",
-    "dg1904":             "1904",
-    "plotter 1904":       "1904",
+    "1904":                    "1904",
+    "1904i":                   "1904",
+    "dg 1904":                 "1904",
+    "dg 1904i":                "1904",
+    "dg1904":                  "1904",
+    "dg1904i":                 "1904",
+    "plotter 1904":            "1904",
+    "plotter 1904i":           "1904",
+    "quatro cabeças":          "1904",
+    "quatro cabecas":          "1904",
 
     # ── 1908 ──────────────────────────────────────────────────────────────────
-    "1908":               "1908",
-    "dg 1908":            "1908",
-    "dg1908":             "1908",
-    "plotter 1908":       "1908",
+    "1908":                    "1908",
+    "1908i":                   "1908",
+    "dg 1908":                 "1908",
+    "dg 1908i":                "1908",
+    "dg1908":                  "1908",
+    "dg1908i":                 "1908",
+    "plotter 1908":            "1908",
+    "plotter 1908i":           "1908",
+    "oito cabeças":            "1908",
+    "oito cabecas":            "1908",
 
     # ── 3202 ──────────────────────────────────────────────────────────────────
-    "3202":               "3202",
-    "dg 3202":            "3202",
-    "dg3202":             "3202",
-    "plotter 3202":       "3202",
+    "3202":                    "3202",
+    "3202i":                   "3202",
+    "dg 3202":                 "3202",
+    "dg 3202i":                "3202",
+    "dg3202":                  "3202",
+    "dg3202i":                 "3202",
+    "plotter 3202":            "3202",
+    "plotter 3202i":           "3202",
 
     # ── 3204 ──────────────────────────────────────────────────────────────────
-    "3204":               "3204",
-    "dg 3204":            "3204",
-    "dg3204":             "3204",
-    "plotter 3204":       "3204",
+    "3204":                    "3204",
+    "3204i":                   "3204",
+    "dg 3204":                 "3204",
+    "dg 3204i":                "3204",
+    "dg3204":                  "3204",
+    "dg3204i":                 "3204",
+    "plotter 3204":            "3204",
+    "plotter 3204i":           "3204",
 
-    # ── 3003 ──────────────────────────────────────────────────────────────────
-    "3003":               "3003",
-    "dg 3003":            "3003",
-    "dg3003":             "3003",
-    "plotter 3003":       "3003",
+    # ── 3003 / DTF UV ─────────────────────────────────────────────────────────
+    "3003":                    "3003",
+    "3003i":                   "3003",
+    "dg 3003":                 "3003",
+    "dg 3003i":                "3003",
+    "dg3003":                  "3003",
+    "dg3003i":                 "3003",
+    "dtf uv":                  "3003",
+    "dtf uv 30":               "3003",
+    "dtf uv 3003":             "3003",
+    "uv 3003":                 "3003",
 
     # ── DTF 30 / 3002 ─────────────────────────────────────────────────────────
-    "dtf 30":             "dtf30",
-    "dtf30":              "dtf30",
-    "dtf 3002":           "dtf30",
-    "dtf3002":            "dtf30",
-    "3002 dtf":           "dtf30",
-    "impressora dtf 30":  "dtf30",
-    "30cm":               "dtf30",
-    "30 cm":              "dtf30",
-    "dtf 30cm":           "dtf30",
-    "de 30cm":            "dtf30",
-    "de 30 cm":           "dtf30",
+    "dtf 30":                  "dtf30",
+    "dtf30":                   "dtf30",
+    "dtf 3002":                "dtf30",
+    "dtf3002":                 "dtf30",
+    "3002":                    "dtf30",
+    "3002i":                   "dtf30",
+    "dg 3002":                 "dtf30",
+    "dg 3002i":                "dtf30",
+    "dg3002":                  "dtf30",
+    "dg3002i":                 "dtf30",
+    "3002 dtf":                "dtf30",
+    "impressora dtf 30":       "dtf30",
+    "dtf têxtil 30":           "dtf30",
+    "dtf textil 30":           "dtf30",
+    "dtf têxtil 3002":         "dtf30",
+    "dtf textil 3002":         "dtf30",
+    "dtf 30cm":                "dtf30",
 
     # ── DTF 60 / 6002 ─────────────────────────────────────────────────────────
-    "dtf 60":             "dtf60",
-    "dtf60":              "dtf60",
-    "dtf 6002":           "dtf60",
-    "dtf6002":            "dtf60",
-    "6002 dtf":           "dtf60",
-    "impressora dtf 60":  "dtf60",
-    "aj 6002":            "dtf60",
-    "aj6002":             "dtf60",
-    "60cm":               "dtf60",
-    "60 cm":              "dtf60",
-    "dtf 60cm":           "dtf60",
-    "de 60cm":            "dtf60",
-    "de 60 cm":           "dtf60",
+    "dtf 60":                  "dtf60",
+    "dtf60":                   "dtf60",
+    "dtf 6002":                "dtf60",
+    "dtf6002":                 "dtf60",
+    "6002":                    "dtf60",
+    "6002i":                   "dtf60",
+    "dg 6002":                 "dtf60",
+    "dg 6002i":                "dtf60",
+    "dg6002":                  "dtf60",
+    "dg6002i":                 "dtf60",
+    "6002 dtf":                "dtf60",
+    "impressora dtf 60":       "dtf60",
+    "dtf têxtil 60":           "dtf60",
+    "dtf textil 60":           "dtf60",
+    "dtf têxtil 6002":         "dtf60",
+    "dtf textil 6002":         "dtf60",
+    "aj 6002":                 "dtf60",
+    "aj6002":                  "dtf60",
+    "dtf 60cm":                "dtf60",
 
     # ── Jinka 1351 ────────────────────────────────────────────────────────────
-    "jinka":              "jinka1351",
-    "jinka 1351":         "jinka1351",
-    "jinka1351":          "jinka1351",
-    "jinka abj":          "jinka1351",
-    "abj 1351":           "jinka1351",
-    "plotter corte":      "jinka1351",
-    "plotter de corte":   "jinka1351",
+    "jinka":                   "jinka1351",
+    "jinka 1351":              "jinka1351",
+    "jinka1351":               "jinka1351",
+    "jinka abj":               "jinka1351",
+    "abj 1351":                "jinka1351",
+    "plotter corte":           "jinka1351",
+    "plotter de corte":        "jinka1351",
+    "recorte":                 "jinka1351",
+    "plotter recorte":         "jinka1351",
+    "dg 1351":                 "jinka1351",
+    "dg1351":                  "jinka1351",
 }
 
 # Catálogo final
@@ -154,29 +220,18 @@ MEDIA_CATALOG = {alias: _PRODUCTS[product] for alias, product in _ALIASES.items(
 
 
 def find_media_for_message(text: str) -> dict | None:
-    """
-    Busca no texto por palavras-chave de produtos.
-    Retorna dict {"video": url, "image": url} ou None.
-    Chaves mais longas têm prioridade.
-    """
     if not text:
         return None
-
     text_lower = text.lower()
     sorted_keys = sorted(MEDIA_CATALOG.keys(), key=len, reverse=True)
-
     for key in sorted_keys:
         pattern = r"\b" + re.escape(key) + r"\b"
         if re.search(pattern, text_lower):
             return MEDIA_CATALOG[key]
-
     return None
 
+
 def find_media_key_for_message(text: str):
-    """
-    Igual a find_media_for_message mas retorna (chave, mídia) ou None.
-    Usado para rastrear o que já foi enviado por conversa.
-    """
     if not text:
         return None
     text_lower = text.lower()
