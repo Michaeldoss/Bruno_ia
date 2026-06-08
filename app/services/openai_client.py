@@ -320,10 +320,10 @@ PENSAMENTO HUNTER:
 MAPEAMENTO DE NOMES — TABELA vs MERCADO:
 "DG 1801i" ou "1801"  = DG 1801/2 - UMA CABEÇA (Sublimática/Eco)
 "DG 1802i" ou "1802"  = DG 1801/2 - DUAS CABEÇAS (Sublimática/Eco)
-"DG 1904i" ou "1904"  = DG 1904 - QUATRO CABEÇAS
-"DG 1908i" ou "1908"  = DG 1908 - OITO CABEÇAS
-"DG 3202i" ou "3202"  = DG 3002 - DUAS CABEÇAS
-"DG 3204i" ou "3204"  = DG 3204 - QUATRO CABEÇAS
+"DG 1904i" ou "1904"  = DG 1904 - QUATRO CABEÇAS (Sublimática)
+"DG 1908i" ou "1908"  = DG 1908 - OITO CABEÇAS (Sublimática)
+"DG 3202i" ou "3202"  = DG 3002 - DUAS CABEÇAS (Sublimática/Eco)
+"DG 3204i" ou "3204"  = DG 3204 - QUATRO CABEÇAS (Sublimática/Eco)
 "DG DTF TÊXTIL 3002"  = DTF 3002 - DUAS CABEÇAS
 "DG DTF TÊXTIL 6002"  = DTF 6002 - DUAS CABEÇAS
 "DG DTF UV 3002"      = DTF UV 3003 - TRÊS CABEÇAS
@@ -340,11 +340,11 @@ CATALOGO TECNICO DOSS GROUP:
 Máquinas NÃO têm corte integrado. Corte = DG1351 separado.
 
 ECO SOLVENTE / SUBLIMÁTICA:
-HS1801i | 1 cabeça i3200 | 1800mm | 2p=70m²/h 3p=64 4p=50 6p=34
+HS1801i | 1 cabeça i3200 | 1800mm | 2p=43m²/h 3p=30 4p=23 6p=15
 DG1801i | 1 cabeça i3200 | 1800mm | 2p=45m²/h 3p=32 4p=25 6p=17
 DG1802i | 2 cabeças i3200 | 1800mm | 2p=90m²/h 3p=64 4p=50 6p=34
 DG1904i | 4 cabeças i3200 | 1900mm | 2p=145m²/h 3p=118 4p=87
-DG1908i | 8 cabeças i3200 | 1850mm | 3p=250m²/h 4p=171 6p=151
+DG1908i | 8 cabeças i3200 | 1850mm | 1p=334m²/h 2p=238
 DG3202i | 2 cabeças i3200 | 3200mm | 3p=64m²/h 4p=50 6p=34
 
 DTF TÊXTIL:
@@ -370,7 +370,7 @@ TINTAS:
 DGeco Premium: Eco solvente CMYK | 2 anos externo
 DGtex DTF: Têxtil CMYK | algodão e poliéster
 DGtex Premium: Sublimática CMYK | poliéster, uniformes
-DGUV: UV CMYK+Branco+Verniz | acrílico, madeira, brindes
+DGUV: UV CMYK+Branco+Verniz | acrílico, madeira, brindes | Escudos ou Patch com Relevo 3D para uniforme
 
 REGRA DE TINTAS — NUNCA PULE:
 Antes de CNPJ ou fechamento, apresente a tinta do equipamento discutido.
