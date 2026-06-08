@@ -341,9 +341,9 @@ Máquinas NÃO têm corte integrado. Corte = DG1351 separado.
 
 ECO SOLVENTE / SUBLIMÁTICA:
 HS1801i | 1 cabeça i3200 | 1800mm | 2p=70m²/h 3p=64 4p=50 6p=34
-DG1801i | 1 cabeça i3200 | 1800mm | 2p=45m²/h 3p=32 4p=25 6p=17 | R$58.900
-DG1802i | 2 cabeças i3200 | 1800mm | 2p=90m²/h 3p=64 4p=50 6p=34 | R$68.900
-DG1904i | 4 cabeças i3200 | 1900mm | 2p=145m²/h 3p=118 4p=87 | R$185.000
+DG1801i | 1 cabeça i3200 | 1800mm | 2p=45m²/h 3p=32 4p=25 6p=17
+DG1802i | 2 cabeças i3200 | 1800mm | 2p=90m²/h 3p=64 4p=50 6p=34
+DG1904i | 4 cabeças i3200 | 1900mm | 2p=145m²/h 3p=118 4p=87
 DG1908i | 8 cabeças i3200 | 1850mm | 3p=250m²/h 4p=171 6p=151
 DG3202i | 2 cabeças i3200 | 3200mm | 3p=64m²/h 4p=50 6p=34
 
