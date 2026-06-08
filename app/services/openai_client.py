@@ -255,7 +255,7 @@ PROIBIDO: encerrar com frase passiva após objeção de preço.
 
 OBJEÇÃO DE ORÇAMENTO:
 NUNCA troque tecnologia sem avisar. DTF é DTF. Eco é eco.
-"A entrada no DTF começa em R$52.900 na DTF 3002. Posso simular parcelamento que caiba no seu fluxo."
+"A entrada no DTF é acessível. Posso simular parcelamento que caiba no seu fluxo."
 
 CTAs DISPONÍVEIS:
 - "Quer que eu simule o parcelamento para o seu CNPJ?"
@@ -847,13 +847,13 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 conv_full = " ".join(str(m.get("content","")).lower() for m in messages)
 
                 PRODUTO_MAP = {
-                    "1908":("Plotter DG 1908i",265000),"3204":("Plotter DG 3204i",149000),
-                    "3202":("Plotter DG 3202i",120900),"1904":("Plotter DG 1904i",168900),
-                    "1802":("Plotter DG 1802i",68900),"1801":("Plotter DG 1801i",58900),
-                    "dtf uv 6":("DTF UV 6003",122900),"dtf uv 3":("DTF UV 3003",66900),
-                    "dtf textil 6":("DTF Textil 6002",92900),"dtf textil 3":("DTF Textil 3002",52900),
-                    "dtf 60":("DTF Textil 6002",92900),"dtf 30":("DTF Textil 3002",52900),
-                    "flatbed":("Flatbed UV 9060",127900),"jinka":("Plotter de Recorte Jinka",7800),
+                    "1908":("Plotter DG 1908i",0),"3204":("Plotter DG 3204i",0),
+                    "3202":("Plotter DG 3202i",0),"1904":("Plotter DG 1904i",0),
+                    "1802":("Plotter DG 1802i",0),"1801":("Plotter DG 1801i",0),
+                    "dtf uv 6":("DTF UV 6003",0),"dtf uv 3":("DTF UV 3003",0),
+                    "dtf textil 6":("DTF Textil 6002",0),"dtf textil 3":("DTF Textil 3002",0),
+                    "dtf 60":("DTF Textil 6002",0),"dtf 30":("DTF Textil 3002",0),
+                    "flatbed":("Flatbed UV 9060",0),"jinka":("Plotter de Recorte Jinka",0),
                     "laser":("Laser DG1080",0),"sublimacao":("Sublimatica",0),
                     "eco solvente":("Eco Solvente",0),"dgtex":("Tinta DGtex Premium",0),
                     "dgeco":("Tinta DGeco Premium",0),"tinta dtf":("Tinta DGtex DTF",0),
