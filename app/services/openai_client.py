@@ -681,28 +681,45 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
             except asyncio.TimeoutError:
                 logger.warning("Timeout Google Sheets")
 
-        if any(k in user_lower for k in ["tinta", "suprimento", "peca", "cabeça", "cleaner", "filme", "po dtf", "verniz", "flush", "rolo", "estoque"]):
-            palavras = [w for w in user_message.split() if len(w) > 3][:3]
+        if any(k in user_lower for k in ["tinta", "suprimento", "peca", "cabeça", "cleaner", "filme", "po dtf", "verniz", "flush", "rolo", "estoque", "litro", "quantidade", "quanto tem"]):
+            contexto_busca = user_message
+            ultimas_msgs = [m for m in messages[-6:] if m.get("role") in ("user", "assistant")]
+            for m in ultimas_msgs:
+                contexto_busca += " " + str(m.get("content", ""))
+
+            palavras = [w for w in contexto_busca.split() if len(w) > 3][:8]
+            codigo_encontrado = None
             for qw in palavras:
                 try:
                     codigo = await asyncio.wait_for(
                         sheets_service.find_codigo_by_name(qw), timeout=5.0
                     )
                     if codigo:
-                        data = await asyncio.wait_for(
-                            uniplus_service.get_stock_and_price(codigo), timeout=5.0
-                        )
-                        if data:
-                            disponivel = "disponivel" if data['estoque'] > 0 else "SEM ESTOQUE"
-                            stock_info += f"\n[SUPRIMENTOS]: {data['nome']} (cod {codigo}) | Saldo: {data['estoque']} un | {disponivel}\n"
-                    else:
+                        codigo_encontrado = codigo
+                        break
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout busca codigo '{qw}'")
+
+            if codigo_encontrado:
+                try:
+                    data = await asyncio.wait_for(
+                        uniplus_service.get_stock_and_price(codigo_encontrado), timeout=5.0
+                    )
+                    if data:
+                        disponivel = "disponivel" if data['estoque'] > 0 else "SEM ESTOQUE"
+                        stock_info += f"\n[SUPRIMENTOS]: {data['nome']} (cod {codigo_encontrado}) | Saldo: {data['estoque']} un | {disponivel}\n"
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout estoque cod '{codigo_encontrado}'")
+            else:
+                for qw in [w for w in user_message.split() if len(w) > 3][:2]:
+                    try:
                         data = await asyncio.wait_for(
                             uniplus_service.get_stock_and_price(qw), timeout=5.0
                         )
                         if data:
                             stock_info += f"\n[SUPRIMENTOS]: {data['nome']} | Saldo: {data['estoque']}\n"
-                except asyncio.TimeoutError:
-                    logger.warning(f"Timeout estoque '{qw}'")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Timeout estoque '{qw}'")
 
         # ── Decide modelo com historico_count ─────────────────────────────
         model = choose_model(user_message, historico_count)
