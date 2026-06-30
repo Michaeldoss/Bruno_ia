@@ -289,23 +289,40 @@ def _created_after(db, phone: str, after: datetime) -> bool:
 
 @app.get("/api/usage-data")
 def usage_data():
+    from app.services.usage_tracker import CUSTOS_FIXOS_MENSAIS_USD
     db = SessionLocal()
     try:
         agora = datetime.utcnow()
         hoje_inicio = agora.replace(hour=0, minute=0, second=0, microsecond=0)
+        mes_inicio = agora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         seven_days_ago = agora - timedelta(days=7)
         thirty_days_ago = agora - timedelta(days=30)
 
         logs_hoje = db.query(UsageLog).filter(UsageLog.created_at >= hoje_inicio).all()
         logs_7d = db.query(UsageLog).filter(UsageLog.created_at >= seven_days_ago).all()
         logs_30d = db.query(UsageLog).filter(UsageLog.created_at >= thirty_days_ago).all()
+        logs_mes = db.query(UsageLog).filter(UsageLog.created_at >= mes_inicio).all()
 
         def soma_custo(logs):
             return round(sum(l.custo_usd or 0 for l in logs), 4)
 
+        def por_servico(logs):
+            agrupado = {}
+            for l in logs:
+                s = l.servico or "anthropic"
+                if s not in agrupado:
+                    agrupado[s] = {"custo": 0.0, "chamadas": 0}
+                agrupado[s]["custo"] += l.custo_usd or 0
+                agrupado[s]["chamadas"] += 1
+            for s in agrupado:
+                agrupado[s]["custo"] = round(agrupado[s]["custo"], 4)
+            return agrupado
+
         def por_modelo(logs):
             agrupado = {}
             for l in logs:
+                if (l.servico or "anthropic") != "anthropic":
+                    continue
                 m = l.model or "desconhecido"
                 if m not in agrupado:
                     agrupado[m] = {"custo": 0.0, "chamadas": 0, "input_tokens": 0, "output_tokens": 0}
@@ -330,9 +347,21 @@ def usage_data():
             dias_labels.append(d)
             dias_valores.append(round(gasto_por_dia.get(d, 0), 4))
 
-        # Projeção simples: média diária dos últimos 7 dias x 30
+        # Custo fixo proporcional ao mes corrente (dias passados / dias do mes)
+        dias_passados_mes = agora.day
+        import calendar
+        dias_no_mes = calendar.monthrange(agora.year, agora.month)[1]
+        proporcao_mes = dias_passados_mes / dias_no_mes
+        custo_fixo_acumulado = round(sum(CUSTOS_FIXOS_MENSAIS_USD.values()) * proporcao_mes, 4)
+        custo_fixo_total_mensal = round(sum(CUSTOS_FIXOS_MENSAIS_USD.values()), 2)
+
+        custo_variavel_mes = soma_custo(logs_mes)
+        custo_total_mes = round(custo_variavel_mes + custo_fixo_acumulado, 4)
+
+        # Projeção: variável (média 7d x 30) + fixo total do mês
         media_diaria_7d = soma_custo(logs_7d) / 7 if logs_7d else 0
-        projecao_mensal = round(media_diaria_7d * 30, 2)
+        projecao_variavel_mensal = round(media_diaria_7d * 30, 2)
+        projecao_total_mensal = round(projecao_variavel_mensal + custo_fixo_total_mensal, 2)
 
         return {
             "hoje": {
@@ -348,11 +377,18 @@ def usage_data():
                 "custo_usd": soma_custo(logs_30d),
                 "chamadas": len(logs_30d),
             },
+            "mes_atual": {
+                "custo_variavel_usd": round(custo_variavel_mes, 4),
+                "custo_fixo_acumulado_usd": custo_fixo_acumulado,
+                "custo_total_usd": custo_total_mes,
+            },
+            "por_servico_30d": por_servico(logs_30d),
+            "custos_fixos_mensais": CUSTOS_FIXOS_MENSAIS_USD,
             "grafico_diario": {
                 "labels": dias_labels,
                 "valores": dias_valores,
             },
-            "projecao_mensal_usd": projecao_mensal,
+            "projecao_mensal_usd": projecao_total_mensal,
             "atualizado_em": agora.strftime("%d/%m/%Y %H:%M:%S"),
         }
     finally:
