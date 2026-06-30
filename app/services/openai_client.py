@@ -21,6 +21,7 @@ from app.services.serasa_client import (
 from app.core.media_catalog import find_media_for_message
 from app.services.campaigns import detectar_campanha, get_contexto_campanha, get_origem_campanha
 from app.services.usage_tracker import registrar_uso_anthropic, registrar_uso_whisper
+from app.services.web_search_helper import precisa_buscar_concorrente, buscar_info_concorrente
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -242,14 +243,15 @@ SE CLIENTE JÁ DECIDIU PELO CONCORRENTE:
 
 REGRA — MÁQUINAS DE OUTRAS MARCAS (Mimaki, Roland, Epson, Mutoh, Brother):
 Quando cliente perguntar detalhes técnicos de equipamento que NÃO é da Doss:
-1. Confirme o que sabe em 1 linha: "A Mimaki TS-100 é sublimatória de 1600mm, boa para volume."
-2. Pivote imediatamente: "Para comparar com o que temos e ver se faz sentido pra você, preciso de mais alguns dados."
-3. Colete o que falta para fechar o card: e-mail, telefone, CNPJ.
-4. Encerre passando para o consultor: "Nosso consultor vai te mandar uma análise completa comparando as duas opções."
+1. Se você receber um bloco "[INFO CONCORRENTE]" no contexto desta mensagem, USE essa informação real para responder em 1 linha.
+2. Se não receber esse bloco, confirme o que sabe de forma genérica em 1 linha, sem inventar números.
+3. Pivote imediatamente: "Para comparar com o que temos e ver se faz sentido pra você, preciso de mais alguns dados."
+4. Colete o que falta para fechar o card: e-mail, telefone, CNPJ.
+5. Encerre passando para o consultor: "Nosso consultor vai te mandar uma análise completa comparando as duas opções."
 
 NUNCA trave em detalhes técnicos de máquinas concorrentes.
-NUNCA diga que não sabe — diga que o consultor vai detalhar melhor pessoalmente.
-O objetivo é: coletar os dados e gerar o card. O vendedor humano faz a comparação.
+NUNCA invente especificação de máquina concorrente que não veio no bloco [INFO CONCORRENTE].
+O objetivo é: usar o dado real se disponível, coletar os dados do cliente e gerar o card. O vendedor humano fecha a comparação.
 ────────────────────────────────────────────────────────────────
 
 VISITAS:
@@ -800,6 +802,23 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         except asyncio.TimeoutError:
                             logger.warning(f"Timeout estoque '{qw}'")
 
+        # ── Busca web para máquinas concorrentes (custo controlado) ──────
+        # Só dispara quando detecta marca concorrente + pergunta técnica
+        info_concorrente = ""
+        try:
+            marca_detectada = precisa_buscar_concorrente(user_message, conv_cliente if 'conv_cliente' in dir() else "")
+        except Exception:
+            marca_detectada = None
+        if marca_detectada:
+            try:
+                info_concorrente = await asyncio.wait_for(
+                    buscar_info_concorrente(client, marca_detectada, user_message), timeout=12.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout busca concorrente '{marca_detectada}'")
+            except Exception as e:
+                logger.error(f"Erro busca concorrente: {e}")
+
         # ── Decide modelo com historico_count ─────────────────────────────
         model = choose_model(user_message, historico_count)
 
@@ -834,6 +853,8 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
             system_dinamico += f"\n\nESTOQUE ATUAL:\n{stock_info}"
         if campanha_ativa and get_contexto_campanha(campanha_ativa):
             system_dinamico += f"\n\n{get_contexto_campanha(campanha_ativa)}"
+        if info_concorrente:
+            system_dinamico += f"\n\n[INFO CONCORRENTE - {marca_detectada.upper()}]: {info_concorrente}"
 
         # ── Cache na parte estática ────────────────────────────────────────
         system_parts = [
