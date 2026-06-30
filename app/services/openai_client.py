@@ -385,6 +385,20 @@ NUNCA diga "preciso acionar o time" ou "não tenho acesso ao estoque" se esse bl
 Se vier uma FAMÍLIA (várias cores), liste as quantidades de cada cor e pergunte qual o cliente precisa.
 Se o cliente não especificou a cor e você recebeu várias opções, pergunte qual cor antes de fechar.
 
+REGRA — "KIT" E "CMYK" SÃO CONCEITOS, NÃO NOMES DE PRODUTO:
+Quando o cliente disser "kit", "CMYK", "uma de cada" ou "kit completo" referindo-se a tinta,
+ele quer dizer: 1 unidade de cada cor (Cyan, Magenta, Yellow, Black) da linha que está sendo discutida.
+NÃO existe um produto chamado "Kit" na tabela — é a combinação das 4 cores.
+NUNCA invente números de estoque (litros, unidades) para "kit" sem ter recebido um bloco [SUPRIMENTOS] real.
+Se o cliente pedir "kit" ou "CMYK" e você NÃO tiver dados de estoque no contexto, pergunte:
+"Você quer o kit CMYK de qual linha — DGtex Premium, DGeco, ou outra?" antes de falar de estoque.
+Só fale de quantidade/estoque depois de ter o bloco [SUPRIMENTOS] real no contexto.
+
+REGRA — NUNCA REPITA A MESMA TRAVA DUAS VEZES:
+Se você já pediu e-mail e telefone na mensagem anterior e o cliente respondeu outra coisa (sem dar email/telefone),
+NÃO repita a mesma frase de novo. Avance a conversa: responda a pergunta nova do cliente primeiro.
+Pedir e-mail e telefone repetidamente sem avançar é proibido — isso quebra a conversa.
+
 REGRAS DE CRÉDITO:
 - Simples Nacional, LTDA, SA: APROVADO para boleto
 - MEI: análise personalizada pelo financeiro
@@ -695,8 +709,20 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
             except asyncio.TimeoutError:
                 logger.warning("Timeout Google Sheets")
 
-        if any(k in user_lower for k in ["tinta", "suprimento", "peca", "cabeça", "cleaner", "filme", "po dtf", "verniz", "flush", "rolo", "estoque", "litro", "quantidade", "quanto tem"]):
-            # PRIORIDADE 1: busca so na mensagem atual do cliente (evita poluicao por historico)
+        # ── Gatilho de estoque real — só dispara com pedido EXPLÍCITO de
+        # disponibilidade/quantidade, nunca apenas por nome de produto
+        # (evita que "quero um kit" ou "uma de cada" acione consulta indevida) ──
+        PALAVRAS_ESTOQUE_EXPLICITO = [
+            "estoque", "tem em estoque", "quanto tem", "quantos litros",
+            "quantas unidades", "disponivel", "disponível", "tem disponivel",
+            "quanto tem disponivel", "tem ai", "tem aí",
+        ]
+        pede_estoque_explicito = any(k in user_lower for k in PALAVRAS_ESTOQUE_EXPLICITO)
+
+        if pede_estoque_explicito:
+            # Busca SEMPRE na mensagem atual do cliente, nunca complementa
+            # com a ultima resposta do Bruno — isso evita reativar produtos
+            # ja mencionados anteriormente na conversa por engano.
             codigo_encontrado = None
             try:
                 codigo_encontrado = await asyncio.wait_for(
@@ -704,28 +730,6 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 )
             except asyncio.TimeoutError:
                 logger.warning("Timeout busca codigo mensagem atual")
-
-            # PRIORIDADE 2: se a mensagem atual sozinha nao identificou produto
-            # (ex: "quantos litros tem" sem citar nome), complementa com a
-            # ULTIMA mensagem do Bruno (onde o produto foi citado), nunca com
-            # o historico inteiro — isso evita score inflado por testes antigos.
-            if not codigo_encontrado:
-                ultima_bruno = next(
-                    (m for m in reversed(messages[:-1]) if m.get("role") == "assistant"),
-                    None
-                )
-                if ultima_bruno:
-                    contexto_busca = user_message + " " + str(ultima_bruno.get("content", ""))
-                    try:
-                        codigo_encontrado = await asyncio.wait_for(
-                            sheets_service.find_codigo_by_phrase(contexto_busca), timeout=5.0
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning("Timeout busca codigo com ultima resposta")
-                else:
-                    contexto_busca = user_message
-            else:
-                contexto_busca = user_message
 
             if codigo_encontrado:
                 try:
@@ -739,10 +743,10 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     logger.warning(f"Timeout estoque cod '{codigo_encontrado}'")
             else:
                 # Sem match unico — pode ser ambiguidade (ex: cor nao especificada)
-                # Busca a familia inteira e consulta estoque de cada um
+                # Busca a familia inteira SOMENTE com base na mensagem atual
                 try:
                     familia = await asyncio.wait_for(
-                        sheets_service.find_familia_by_phrase(contexto_busca), timeout=5.0
+                        sheets_service.find_familia_by_phrase(user_message), timeout=5.0
                     )
                 except asyncio.TimeoutError:
                     familia = []
