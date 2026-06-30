@@ -120,3 +120,20 @@ class UsageLog(Base):
 # No PostgreSQL isso é idempotente — não apaga dados existentes
 # ---------------------------------------------------------------------------
 Base.metadata.create_all(bind=engine)
+
+# ---------------------------------------------------------------------------
+# Migração segura — adiciona colunas novas em tabelas que já existiam
+# (Base.metadata.create_all NÃO faz ALTER TABLE em colunas novas)
+# ---------------------------------------------------------------------------
+import sqlalchemy as _sa
+
+def _add_column_if_missing(table: str, col_name: str, col_type: str):
+    try:
+        with engine.connect() as conn:
+            conn.execute(_sa.text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}"))
+            conn.commit()
+    except Exception:
+        pass  # coluna já existe — ignora
+
+_add_column_if_missing("usage_logs", "servico", "VARCHAR DEFAULT 'anthropic'")
+_add_column_if_missing("usage_logs", "quantidade", "FLOAT DEFAULT 0.0")
