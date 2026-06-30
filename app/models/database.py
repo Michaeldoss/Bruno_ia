@@ -96,18 +96,21 @@ class MediaSent(Base):
 
 
 class UsageLog(Base):
-    """Registra uso de tokens da API Anthropic a cada resposta do Bruno (custo em tempo real)."""
+    """Registra uso de qualquer servico pago (Anthropic, Twilio, Whisper) em tempo real."""
     __tablename__ = "usage_logs"
 
-    id     = Column(Integer, primary_key=True, index=True)
-    agente = Column(String, default="bruno", index=True)  # "bruno", "liz", etc — preparado p/ multi-agente
-    model  = Column(String)  # "claude-haiku-4-5-20251001" ou "claude-sonnet-4-6"
+    id      = Column(Integer, primary_key=True, index=True)
+    agente  = Column(String, default="bruno", index=True)    # "bruno", "liz", etc
+    servico = Column(String, default="anthropic", index=True)  # "anthropic", "twilio", "whisper"
+    model   = Column(String)  # nome do modelo/servico especifico
 
     input_tokens           = Column(Integer, default=0)
     output_tokens          = Column(Integer, default=0)
     cache_creation_tokens  = Column(Integer, default=0)
     cache_read_tokens      = Column(Integer, default=0)
-    custo_usd              = Column(Float, default=0.0)
+    quantidade             = Column(Float, default=0.0)  # mensagens (twilio) ou minutos (whisper)
+
+    custo_usd = Column(Float, default=0.0)
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
