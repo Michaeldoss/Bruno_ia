@@ -1,6 +1,7 @@
 import logging
 from twilio.rest import Client
 from app.config import get_settings
+from app.services.usage_tracker import registrar_uso_twilio
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -41,6 +42,9 @@ class TwilioClient:
             import asyncio
             message = await asyncio.to_thread(self.client.messages.create, **params)
             logger.info(f"Mensagem enviada com sucesso: SID {message.sid}")
+
+            registrar_uso_twilio(agente="bruno", quantidade_mensagens=1)
+
             return message.sid
         except Exception as e:
             logger.error(f"Erro ao enviar mensagem via Twilio: {e}")
