@@ -687,18 +687,13 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
             for m in ultimas_msgs:
                 contexto_busca += " " + str(m.get("content", ""))
 
-            palavras = [w for w in contexto_busca.split() if len(w) > 3][:8]
             codigo_encontrado = None
-            for qw in palavras:
-                try:
-                    codigo = await asyncio.wait_for(
-                        sheets_service.find_codigo_by_name(qw), timeout=5.0
-                    )
-                    if codigo:
-                        codigo_encontrado = codigo
-                        break
-                except asyncio.TimeoutError:
-                    logger.warning(f"Timeout busca codigo '{qw}'")
+            try:
+                codigo_encontrado = await asyncio.wait_for(
+                    sheets_service.find_codigo_by_phrase(contexto_busca), timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Timeout busca codigo por frase")
 
             if codigo_encontrado:
                 try:
