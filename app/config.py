@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     UNIPLUS_AUTH_CODE: str = "stub"
     UNIPLUS_BASE_URL: str = "https://vzan-getcard01.getcard.uniplusweb.com"
     UNIPLUS_CLIENT_ID: str = "40045152000125"
-    UNIPLUS_CLIENT_SECRET: str = "cbeee2e8-6d5a-40e0-af53-dec62797e36a"
+    UNIPLUS_CLIENT_SECRET: str = "41c20f17-2bd7-4c4c-b69f-b82981b5b5b3"
     UNIPLUS_FILIAL: str = "2"
     UNIPLUS_LOCAL_ESTOQUE: str = "2"
 
