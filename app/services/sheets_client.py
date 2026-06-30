@@ -110,6 +110,26 @@ class SheetsClient:
 
         return melhor_codigo if melhor_score >= 2 else None
 
+    async def find_familia_by_phrase(self, phrase: str) -> List[Dict]:
+        catalog = await self.get_supplies_catalog()
+        palavras_busca = set(w for w in phrase.lower().split() if len(w) > 2)
+        if not palavras_busca:
+            return []
+
+        scored = []
+        for codigo, data in catalog.items():
+            palavras_nome = set(data["nome"].lower().split())
+            score = len(palavras_busca & palavras_nome)
+            if score >= 2:
+                scored.append((codigo, data["nome"], score))
+
+        if not scored:
+            return []
+
+        max_score = max(s[2] for s in scored)
+        empatados = [s for s in scored if s[2] == max_score]
+        return [{"codigo": c, "nome": n} for c, n, _ in empatados[:6]]
+
     async def build_tabela_precos(self) -> str:
         equipamentos = await self.get_machines()
         suprimentos = await self.get_supplies()
