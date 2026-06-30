@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from app.config import get_settings
 from app.api.webhooks import router as webhook_router
 from app.services.followup_service import start_followup_service
-from app.models.database import SessionLocal, Conversation, Lead, LeadState
+from app.models.database import SessionLocal, Conversation, Lead, LeadState, UsageLog
 from datetime import datetime, timedelta
 from collections import defaultdict
 import re
@@ -284,6 +284,82 @@ def _created_after(db, phone: str, after: datetime) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# API de custo de uso da API Anthropic (tempo real)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/usage-data")
+def usage_data():
+    db = SessionLocal()
+    try:
+        agora = datetime.utcnow()
+        hoje_inicio = agora.replace(hour=0, minute=0, second=0, microsecond=0)
+        seven_days_ago = agora - timedelta(days=7)
+        thirty_days_ago = agora - timedelta(days=30)
+
+        logs_hoje = db.query(UsageLog).filter(UsageLog.created_at >= hoje_inicio).all()
+        logs_7d = db.query(UsageLog).filter(UsageLog.created_at >= seven_days_ago).all()
+        logs_30d = db.query(UsageLog).filter(UsageLog.created_at >= thirty_days_ago).all()
+
+        def soma_custo(logs):
+            return round(sum(l.custo_usd or 0 for l in logs), 4)
+
+        def por_modelo(logs):
+            agrupado = {}
+            for l in logs:
+                m = l.model or "desconhecido"
+                if m not in agrupado:
+                    agrupado[m] = {"custo": 0.0, "chamadas": 0, "input_tokens": 0, "output_tokens": 0}
+                agrupado[m]["custo"] += l.custo_usd or 0
+                agrupado[m]["chamadas"] += 1
+                agrupado[m]["input_tokens"] += l.input_tokens or 0
+                agrupado[m]["output_tokens"] += l.output_tokens or 0
+            for m in agrupado:
+                agrupado[m]["custo"] = round(agrupado[m]["custo"], 4)
+            return agrupado
+
+        # Gasto por dia, últimos 7 dias (para gráfico)
+        gasto_por_dia = defaultdict(float)
+        for l in logs_7d:
+            dia = l.created_at.strftime("%d/%m")
+            gasto_por_dia[dia] += (l.custo_usd or 0)
+
+        dias_labels = []
+        dias_valores = []
+        for i in range(6, -1, -1):
+            d = (agora - timedelta(days=i)).strftime("%d/%m")
+            dias_labels.append(d)
+            dias_valores.append(round(gasto_por_dia.get(d, 0), 4))
+
+        # Projeção simples: média diária dos últimos 7 dias x 30
+        media_diaria_7d = soma_custo(logs_7d) / 7 if logs_7d else 0
+        projecao_mensal = round(media_diaria_7d * 30, 2)
+
+        return {
+            "hoje": {
+                "custo_usd": soma_custo(logs_hoje),
+                "chamadas": len(logs_hoje),
+            },
+            "ultimos_7_dias": {
+                "custo_usd": soma_custo(logs_7d),
+                "chamadas": len(logs_7d),
+                "por_modelo": por_modelo(logs_7d),
+            },
+            "ultimos_30_dias": {
+                "custo_usd": soma_custo(logs_30d),
+                "chamadas": len(logs_30d),
+            },
+            "grafico_diario": {
+                "labels": dias_labels,
+                "valores": dias_valores,
+            },
+            "projecao_mensal_usd": projecao_mensal,
+            "atualizado_em": agora.strftime("%d/%m/%Y %H:%M:%S"),
+        }
+    finally:
+        db.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Dashboard visual
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -329,7 +405,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     overflow-x: hidden;
   }
 
-  /* Grid noise texture */
   body::before {
     content: '';
     position: fixed;
@@ -350,7 +425,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     padding: 24px;
   }
 
-  /* Header */
   .header {
     display: flex;
     align-items: center;
@@ -451,7 +525,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     border-color: var(--yellow);
   }
 
-  /* KPI Grid */
   .kpi-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -516,7 +589,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     color: var(--muted);
   }
 
-  /* Charts Grid */
   .charts-grid {
     display: grid;
     grid-template-columns: 2fr 1fr;
@@ -568,7 +640,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     height: 260px;
   }
 
-  /* Tabela */
   .table-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -623,7 +694,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .check { color: var(--green); }
   .cross { color: var(--red); opacity: 0.4; }
 
-  /* Follow-up row */
   .fu-bar {
     display: flex;
     gap: 3px;
@@ -639,7 +709,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   .fu-dot.active { background: var(--accent2); box-shadow: 0 0 4px var(--accent2); }
 
-  /* Loading */
   .loading {
     display: flex;
     align-items: center;
@@ -660,7 +729,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Error */
   .error-msg {
     display: flex;
     align-items: center;
@@ -670,7 +738,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     font-size: 13px;
   }
 
-  /* Responsive */
   @media (max-width: 1024px) {
     .charts-grid { grid-template-columns: 1fr; }
     .charts-grid-3 { grid-template-columns: 1fr; }
@@ -694,13 +761,24 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <span class="badge badge-live">● Live</span>
       <span class="last-update" id="last-update">Carregando...</span>
       <a href="/monitor" class="btn-monitor">Monitor</a>
-      <button class="btn-refresh" onclick="loadData()">↻ Atualizar</button>
+      <button class="btn-refresh" onclick="loadData(); loadUsageData();">↻ Atualizar</button>
     </div>
   </div>
 
   <!-- KPIs -->
   <div class="kpi-grid" id="kpi-grid">
     <div class="loading"><div class="spinner"></div> Carregando dados...</div>
+  </div>
+
+  <!-- Custo de API -->
+  <div class="chart-card" style="margin-bottom:16px">
+    <div class="chart-title">Custo de API (Anthropic) — Bruno</div>
+    <div id="custo-cards" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:16px;">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+    <div class="chart-container" style="height:180px">
+      <canvas id="chartCustoDiario"></canvas>
+    </div>
   </div>
 
   <!-- Leads por dia + Stages -->
@@ -824,6 +902,83 @@ async function loadData() {
     console.error(e);
     document.getElementById('kpi-grid').innerHTML = '<div class="error-msg">Erro ao carregar dados. Verifique a conexão.</div>';
   }
+}
+
+async function loadUsageData() {
+  try {
+    const res = await fetch('/api/usage-data');
+    const u = await res.json();
+    renderCustoCards(u);
+    renderChartCustoDiario(u.grafico_diario);
+  } catch(e) {
+    console.error('Erro ao carregar custos:', e);
+    document.getElementById('custo-cards').innerHTML =
+      '<div class="error-msg" style="color: var(--muted)">Custo indisponivel</div>';
+  }
+}
+
+function renderCustoCards(u) {
+  const fmt = (v) => '$' + v.toFixed(4);
+  document.getElementById('custo-cards').innerHTML = `
+    <div class="kpi-card accent">
+      <div class="kpi-label">Hoje</div>
+      <div class="kpi-value" style="font-size:24px">${fmt(u.hoje.custo_usd)}</div>
+      <div class="kpi-sub">${u.hoje.chamadas} chamadas</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-label">Últimos 7 dias</div>
+      <div class="kpi-value" style="font-size:24px">${fmt(u.ultimos_7_dias.custo_usd)}</div>
+      <div class="kpi-sub">${u.ultimos_7_dias.chamadas} chamadas</div>
+    </div>
+    <div class="kpi-card orange">
+      <div class="kpi-label">Últimos 30 dias</div>
+      <div class="kpi-value" style="font-size:24px">${fmt(u.ultimos_30_dias.custo_usd)}</div>
+      <div class="kpi-sub">${u.ultimos_30_dias.chamadas} chamadas</div>
+    </div>
+    <div class="kpi-card purple">
+      <div class="kpi-label">Projeção mensal</div>
+      <div class="kpi-value" style="font-size:24px">${fmt(u.projecao_mensal_usd)}</div>
+      <div class="kpi-sub">baseado em 7d</div>
+    </div>
+  `;
+}
+
+function renderChartCustoDiario(data) {
+  destroyChart('custoDiario');
+  const ctx = document.getElementById('chartCustoDiario').getContext('2d');
+  charts['custoDiario'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.labels,
+      datasets: [{
+        label: 'Custo USD',
+        data: data.valores,
+        backgroundColor: CORES.green,
+        borderRadius: 4,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => '$' + ctx.parsed.y.toFixed(4)
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: {
+          grid: { color: 'rgba(42,42,58,0.5)' },
+          beginAtZero: true,
+          ticks: { callback: (v) => '$' + v.toFixed(2) }
+        }
+      }
+    }
+  });
 }
 
 function renderKPIs(k) {
@@ -1075,7 +1230,9 @@ function renderTabela(leads) {
 
 // Carrega na inicialização e a cada 60s
 loadData();
+loadUsageData();
 setInterval(loadData, 60000);
+setInterval(loadUsageData, 60000);
 </script>
 </body>
 </html>
