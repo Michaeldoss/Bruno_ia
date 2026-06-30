@@ -87,6 +87,29 @@ class SheetsClient:
                 return codigo
         return None
 
+    async def find_codigo_by_phrase(self, phrase: str) -> Optional[str]:
+        """
+        Busca o produto cujo nome tem o MAIOR numero de palavras da frase
+        em comum. Resolve ambiguidade quando ha multiplas palavras soltas
+        (ex: 'tinta dgtex premium black' deve achar BLACK PREMIUM, nao CYAN).
+        """
+        catalog = await self.get_supplies_catalog()
+        palavras_busca = set(w for w in phrase.lower().split() if len(w) > 2)
+        if not palavras_busca:
+            return None
+
+        melhor_codigo = None
+        melhor_score = 0
+        for codigo, data in catalog.items():
+            nome_lower = data["nome"].lower()
+            palavras_nome = set(nome_lower.split())
+            score = len(palavras_busca & palavras_nome)
+            if score > melhor_score:
+                melhor_score = score
+                melhor_codigo = codigo
+
+        return melhor_codigo if melhor_score >= 2 else None
+
     async def build_tabela_precos(self) -> str:
         equipamentos = await self.get_machines()
         suprimentos = await self.get_supplies()
