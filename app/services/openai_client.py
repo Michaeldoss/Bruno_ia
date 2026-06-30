@@ -20,7 +20,7 @@ from app.services.serasa_client import (
 )
 from app.core.media_catalog import find_media_for_message
 from app.services.campaigns import detectar_campanha, get_contexto_campanha, get_origem_campanha
-from app.services.usage_tracker import registrar_uso
+from app.services.usage_tracker import registrar_uso_anthropic, registrar_uso_whisper
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -450,9 +450,15 @@ async def transcribe_audio(audio_url: str) -> str:
             tmp_path = tmp.name
         def _sync_transcribe(path):
             with open(path, "rb") as f:
-                return openai_client.audio.transcriptions.create(model="whisper-1", file=f)
+                return openai_client.audio.transcriptions.create(
+                    model="whisper-1", file=f, response_format="verbose_json"
+                )
         transcript = await asyncio.wait_for(asyncio.to_thread(_sync_transcribe, tmp_path), timeout=30.0)
         os.remove(tmp_path)
+
+        duracao_segundos = getattr(transcript, "duration", 0) or 0
+        registrar_uso_whisper(agente="bruno", segundos_audio=duracao_segundos)
+
         return transcript.text
     except Exception as e:
         logger.error(f"Erro na transcrição: {e}")
@@ -829,7 +835,7 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
         if not response.content:
             return ["Pode repetir?"]
 
-        registrar_uso(model, response.usage, agente="bruno")
+        registrar_uso_anthropic(model, response.usage, agente="bruno")
 
         reply_text = response.content[0].text.strip()
         db.add(Conversation(phone=phone, role="assistant", content=reply_text))
