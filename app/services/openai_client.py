@@ -377,6 +377,13 @@ Antes de CNPJ ou fechamento, apresente a tinta do equipamento discutido.
 Eco → DGeco | Sublimática → DGtex Premium | DTF → DGtex DTF | UV → DGUV
 "Tinta de segunda linha pode custar menos o litro, mas o cabeçote que ela dana custa 10x mais."
 
+REGRA DE ESTOQUE REAL — USE SEMPRE QUE DISPONÍVEL:
+Se você receber um bloco "[SUPRIMENTOS]" ou "[SUPRIMENTOS - FAMILIA DE PRODUTOS]" no contexto da mensagem,
+ele contém a quantidade REAL em estoque consultada agora no sistema. USE esse número diretamente na resposta.
+NUNCA diga "preciso acionar o time" ou "não tenho acesso ao estoque" se esse bloco estiver presente.
+Se vier uma FAMÍLIA (várias cores), liste as quantidades de cada cor e pergunte qual o cliente precisa.
+Se o cliente não especificou a cor e você recebeu várias opções, pergunte qual cor antes de fechar.
+
 REGRAS DE CRÉDITO:
 - Simples Nacional, LTDA, SA: APROVADO para boleto
 - MEI: análise personalizada pelo financeiro
@@ -706,15 +713,37 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout estoque cod '{codigo_encontrado}'")
             else:
-                for qw in [w for w in user_message.split() if len(w) > 3][:2]:
-                    try:
-                        data = await asyncio.wait_for(
-                            uniplus_service.get_stock_and_price(qw), timeout=5.0
-                        )
-                        if data:
-                            stock_info += f"\n[SUPRIMENTOS]: {data['nome']} | Saldo: {data['estoque']}\n"
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Timeout estoque '{qw}'")
+                # Sem match unico — pode ser ambiguidade (ex: cor nao especificada)
+                # Busca a familia inteira e consulta estoque de cada um
+                try:
+                    familia = await asyncio.wait_for(
+                        sheets_service.find_familia_by_phrase(contexto_busca), timeout=5.0
+                    )
+                except asyncio.TimeoutError:
+                    familia = []
+
+                if familia:
+                    stock_info += "\n[SUPRIMENTOS - FAMILIA DE PRODUTOS]:\n"
+                    for item in familia:
+                        try:
+                            data = await asyncio.wait_for(
+                                uniplus_service.get_stock_and_price(item["codigo"]), timeout=5.0
+                            )
+                            if data:
+                                disponivel = "disponivel" if data['estoque'] > 0 else "SEM ESTOQUE"
+                                stock_info += f"  - {data['nome']} (cod {item['codigo']}) | Saldo: {data['estoque']} un | {disponivel}\n"
+                        except asyncio.TimeoutError:
+                            logger.warning(f"Timeout estoque familia cod '{item['codigo']}'")
+                else:
+                    for qw in [w for w in user_message.split() if len(w) > 3][:2]:
+                        try:
+                            data = await asyncio.wait_for(
+                                uniplus_service.get_stock_and_price(qw), timeout=5.0
+                            )
+                            if data:
+                                stock_info += f"\n[SUPRIMENTOS]: {data['nome']} | Saldo: {data['estoque']}\n"
+                        except asyncio.TimeoutError:
+                            logger.warning(f"Timeout estoque '{qw}'")
 
         # ── Decide modelo com historico_count ─────────────────────────────
         model = choose_model(user_message, historico_count)
