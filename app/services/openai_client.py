@@ -20,6 +20,7 @@ from app.services.serasa_client import (
 )
 from app.core.media_catalog import find_media_for_message
 from app.services.campaigns import detectar_campanha, get_contexto_campanha, get_origem_campanha
+from app.services.usage_tracker import registrar_uso
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -689,18 +690,36 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 logger.warning("Timeout Google Sheets")
 
         if any(k in user_lower for k in ["tinta", "suprimento", "peca", "cabeça", "cleaner", "filme", "po dtf", "verniz", "flush", "rolo", "estoque", "litro", "quantidade", "quanto tem"]):
-            contexto_busca = user_message
-            ultimas_msgs = [m for m in messages[-6:] if m.get("role") in ("user", "assistant")]
-            for m in ultimas_msgs:
-                contexto_busca += " " + str(m.get("content", ""))
-
+            # PRIORIDADE 1: busca so na mensagem atual do cliente (evita poluicao por historico)
             codigo_encontrado = None
             try:
                 codigo_encontrado = await asyncio.wait_for(
-                    sheets_service.find_codigo_by_phrase(contexto_busca), timeout=5.0
+                    sheets_service.find_codigo_by_phrase(user_message), timeout=5.0
                 )
             except asyncio.TimeoutError:
-                logger.warning("Timeout busca codigo por frase")
+                logger.warning("Timeout busca codigo mensagem atual")
+
+            # PRIORIDADE 2: se a mensagem atual sozinha nao identificou produto
+            # (ex: "quantos litros tem" sem citar nome), complementa com a
+            # ULTIMA mensagem do Bruno (onde o produto foi citado), nunca com
+            # o historico inteiro — isso evita score inflado por testes antigos.
+            if not codigo_encontrado:
+                ultima_bruno = next(
+                    (m for m in reversed(messages[:-1]) if m.get("role") == "assistant"),
+                    None
+                )
+                if ultima_bruno:
+                    contexto_busca = user_message + " " + str(ultima_bruno.get("content", ""))
+                    try:
+                        codigo_encontrado = await asyncio.wait_for(
+                            sheets_service.find_codigo_by_phrase(contexto_busca), timeout=5.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("Timeout busca codigo com ultima resposta")
+                else:
+                    contexto_busca = user_message
+            else:
+                contexto_busca = user_message
 
             if codigo_encontrado:
                 try:
@@ -809,6 +828,8 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
 
         if not response.content:
             return ["Pode repetir?"]
+
+        registrar_uso(model, response.usage, agente="bruno")
 
         reply_text = response.content[0].text.strip()
         db.add(Conversation(phone=phone, role="assistant", content=reply_text))
