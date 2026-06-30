@@ -681,14 +681,28 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
             except asyncio.TimeoutError:
                 logger.warning("Timeout Google Sheets")
 
-        if any(k in user_lower for k in ["tinta", "suprimento", "peca", "cabeça", "cleaner"]):
-            for qw in [w for w in user_message.split() if len(w) > 3][:2]:
+        if any(k in user_lower for k in ["tinta", "suprimento", "peca", "cabeça", "cleaner", "filme", "po dtf", "verniz", "flush", "rolo", "estoque"]):
+            palavras = [w for w in user_message.split() if len(w) > 3][:3]
+            for qw in palavras:
                 try:
-                    data = await asyncio.wait_for(uniplus_service.get_stock_and_price(qw), timeout=5.0)
-                    if data:
-                        stock_info += f"\n[SUPRIMENTOS]: {data['nome']} | Saldo: {data['estoque']}\n"
+                    codigo = await asyncio.wait_for(
+                        sheets_service.find_codigo_by_name(qw), timeout=5.0
+                    )
+                    if codigo:
+                        data = await asyncio.wait_for(
+                            uniplus_service.get_stock_and_price(codigo), timeout=5.0
+                        )
+                        if data:
+                            disponivel = "disponivel" if data['estoque'] > 0 else "SEM ESTOQUE"
+                            stock_info += f"\n[SUPRIMENTOS]: {data['nome']} (cod {codigo}) | Saldo: {data['estoque']} un | {disponivel}\n"
+                    else:
+                        data = await asyncio.wait_for(
+                            uniplus_service.get_stock_and_price(qw), timeout=5.0
+                        )
+                        if data:
+                            stock_info += f"\n[SUPRIMENTOS]: {data['nome']} | Saldo: {data['estoque']}\n"
                 except asyncio.TimeoutError:
-                    logger.warning(f"Timeout Uniplus '{qw}'")
+                    logger.warning(f"Timeout estoque '{qw}'")
 
         # ── Decide modelo com historico_count ─────────────────────────────
         model = choose_model(user_message, historico_count)
