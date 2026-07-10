@@ -1,0 +1,88 @@
+import requests
+import logging
+from typing import Optional
+from app.config import get_settings
+
+settings = get_settings()
+logger = logging.getLogger(__name__)
+
+# Endpoint do Doss CRM que recebe leads do Bruno IA. Ver
+# api/leads/create.js no repo do Doss CRM para o contrato completo.
+DOSS_CRM_URL = getattr(settings, "DOSS_CRM_LEADS_URL", "https://doss-crm.vercel.app/api/leads/create")
+DOSS_CRM_KEY = getattr(settings, "BRUNO_API_KEY", None)
+
+if not DOSS_CRM_KEY:
+    logger.critical(
+        "Doss CRM: BRUNO_API_KEY nao configurada no .env do Bruno. "
+        "escalate_to_human vai falhar ate isso ser corrigido."
+    )
+
+
+async def escalate_to_human(
+    phone: str,
+    name: str,
+    summary: str,
+    produto: str = "",
+    cidade: str = "",
+    origem: str = "Bruno IA",
+    valor_estimado: int = 0,
+    tecnologia: str = "",
+    perfil: str = "",
+    serasa_nota: str = "",
+) -> bool:
+    """
+    Envia o lead pro Doss CRM quando Bruno encerra a conversa.
+    Substitui a integracao antiga com o Arcca (arcca_client.py).
+
+    O endpoint do lado do Doss CRM cuida de: criar/achar contato,
+    criar conversa, criar card no pipeline em "Novo Lead" com rodizio
+    de agente, e salvar resumo/analise Serasa como nota atrelada ao
+    lead.
+    """
+    if not DOSS_CRM_KEY:
+        logger.error("Doss CRM: BRUNO_API_KEY nao configurada - abortando escalate_to_human")
+        return False
+
+    payload = {
+        "phone": phone,
+        "nome": name or phone,
+        "produto": produto,
+        "cidade": cidade,
+        "origem": origem,
+        "valor_estimado": valor_estimado,
+        "tecnologia": tecnologia,
+        "perfil": perfil,
+        "resumo": summary,
+        "serasa_nota": serasa_nota,
+    }
+
+    try:
+        r = requests.post(
+            DOSS_CRM_URL,
+            json=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-bruno-key": DOSS_CRM_KEY,
+            },
+            timeout=10,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            logger.info(
+                f"Doss CRM: lead criado - contact_id={data.get('contact_id')} "
+                f"pipeline_lead_id={data.get('pipeline_lead_id')} "
+                f"agente={data.get('assigned_agent_id')}"
+            )
+            return True
+
+        logger.error(f"Doss CRM: falha ao criar lead - {r.status_code} | {r.text[:300]}")
+        return False
+
+    except Exception as e:
+        logger.error(f"Doss CRM escalate_to_human excecao: {e}")
+        return False
+
+
+# Alias para compatibilidade com openai_client.py (mesmo nome usado
+# antes com o arcca_client.py, assim nao precisa mexer em quem chama)
+arcca_client = escalate_to_human
