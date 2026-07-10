@@ -16,7 +16,7 @@ from app.services.serasa_client import (
     is_cnpj_ativo, get_score, tem_negativos,
     get_socios_com_restricao, get_consultas_mercado,
     get_probabilidade_inadimplencia, calcular_tempo_empresa,
-    get_capital_social
+    get_capital_social, avaliar_risco_negocio
 )
 from app.core.media_catalog import find_media_for_message
 from app.services.campaigns import detectar_campanha, get_contexto_campanha, get_origem_campanha
@@ -619,6 +619,7 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     capital_s = get_capital_social(cnpj_data)
                     prob_inad = get_probabilidade_inadimplencia(cnpj_data)
                     consultas = get_consultas_mercado(cnpj_data)
+                    veredito  = avaliar_risco_negocio(cnpj_data)
                     lead_state.cnpj_data = json.dumps(cnpj_data, ensure_ascii=False)
                     db.commit()
 
@@ -638,24 +639,27 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     else:
                         pedido_dados = "EMAIL e TELEFONE ja estao registrados -- NAO peca de novo em hipotese nenhuma. Encerre agradecendo e avisando que o time comercial vai entrar em contato."
 
+                    # ANTES: so olhava score<300 + negativos (bool) pra
+                    # decidir tudo. Agora usa avaliar_risco_negocio(), que
+                    # pesa TODOS os fatores juntos (protestos, acoes
+                    # judiciais, socio com restricao, volume de consultas
+                    # recentes, tempo de empresa, etc) e ja devolve a
+                    # recomendacao de condicao de pagamento pronta.
                     if regime == "MEI":
                         parecer = "MEI"
                         instrucao = "Diga 'Para MEI nossa equipe faz analise personalizada. Vou encaminhar seus dados.'"
-                    elif not ativo:
-                        parecer = "CNPJ INATIVO"
-                        instrucao = "Diga 'Vou encaminhar para nosso time verificar.' Nao mencione inativo."
-                    elif negativos and score_s < 300:
-                        parecer = "RISCO ALTO"
+                    elif veredito["nivel"] == "bloqueado":
+                        parecer = veredito["motivo"]
+                        instrucao = "Diga 'Vou encaminhar para nosso time verificar.' Nao mencione o motivo."
+                    elif veredito["nivel"] == "risco_alto":
+                        parecer = f"RISCO ALTO — {veredito['motivo']}"
                         instrucao = f"NAO mencione restricoes. Diga 'Vou encaminhar para nosso time analisar as melhores condicoes.' {pedido_dados}"
-                    elif negativos:
-                        parecer = "RESTRICOES PRESENTES"
-                        instrucao = f"NAO mencione restricoes. Diga 'Vou encaminhar para nosso time.' {pedido_dados}"
-                    elif regime in ("normal", "SIMPLES"):
-                        parecer = "APROVADO — boleto liberado"
-                        instrucao = f"APROVADO. Diga 'Posso seguir com parcelamento no boleto. Nosso consultor monta a proposta.' {pedido_dados}"
+                    elif veredito["nivel"] == "aprovado_com_cautela":
+                        parecer = f"APROVADO COM CAUTELA — {veredito['recomendacao']}"
+                        instrucao = f"NAO mencione restricoes. Diga 'Posso seguir com parcelamento, nosso consultor confirma as condicoes.' {pedido_dados}"
                     else:
-                        parecer = "VERIFICAR"
-                        instrucao = f"Diga 'Vou encaminhar para nosso time analisar.' {pedido_dados}"
+                        parecer = f"APROVADO — {veredito['recomendacao']}"
+                        instrucao = f"APROVADO. Diga 'Posso seguir com parcelamento no boleto. Nosso consultor monta a proposta.' {pedido_dados}"
 
                     cnpj_context = (
                         "[SISTEMA: Consulta Serasa realizada]\n"
@@ -1100,6 +1104,9 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 serasa_score = None
                 serasa_negativos = None
                 serasa_regime = None
+                serasa_nivel = None
+                serasa_recomendacao = None
+                serasa_fatores = None
                 if lead_state.cnpj_data:
                     try:
                         cd = _json.loads(lead_state.cnpj_data)
@@ -1109,17 +1116,17 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                                 _regime = get_regime_serasa(cd)
                                 _score = get_score(cd)
                                 _negativos = tem_negativos(cd)
-                                _ativo = is_cnpj_ativo(cd)
+                                _veredito = avaliar_risco_negocio(cd)
                                 serasa_score = _score
                                 serasa_negativos = _negativos
                                 serasa_regime = _regime
+                                serasa_nivel = _veredito["nivel"]
+                                serasa_recomendacao = _veredito["recomendacao"]
+                                serasa_fatores = "; ".join(_veredito["fatores"])
                                 if _regime == "MEI": _parecer = "MEI — ANALISE PERSONALIZADA"
-                                elif not _ativo: _parecer = "CNPJ INATIVO"
-                                elif _negativos and _score < 300: _parecer = f"RISCO ALTO — score {_score}/1000"
-                                elif _negativos: _parecer = f"RESTRICOES — score {_score}/1000"
-                                elif _regime in ("normal","SIMPLES"): _parecer = f"APROVADO — score {_score}/1000"
-                                else: _parecer = f"VERIFICAR — {_regime}"
-                                cnpj_info = f"PARECER: {_parecer}\n\n" + raw_serasa
+                                elif _veredito["nivel"] == "bloqueado": _parecer = _veredito["motivo"]
+                                else: _parecer = f"{_veredito['nivel'].upper()} — {_veredito['recomendacao']} (score {_score}/1000)"
+                                cnpj_info = f"PARECER: {_parecer}\n\nFATORES: {serasa_fatores}\n\n" + raw_serasa
                     except: pass
 
                 PREFIXOS_SISTEMA = ("[SISTEMA","[FOLLOWUP","Regime:","Score:","CNPJ Ativo:","Negativos:","INSTRUCAO:","NAO ENCONTRADO")
@@ -1196,6 +1203,9 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         serasa_score=serasa_score,
                         serasa_negativos=serasa_negativos,
                         serasa_regime=serasa_regime,
+                        serasa_nivel=serasa_nivel,
+                        serasa_recomendacao=serasa_recomendacao,
+                        serasa_fatores=serasa_fatores,
                     )
                     if ok:
                         logger.info(f"[ARCCA] Card criado para {phone}")

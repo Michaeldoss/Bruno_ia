@@ -392,3 +392,184 @@ def format_serasa_summary(data: dict) -> str:
     except Exception as e:
         logger.error(f"Erro ao formatar Serasa: {e}")
         return f"Erro ao formatar retorno Serasa: {e}"
+
+
+# ── Avaliacao de risco pro tipo de negocio da Doss (venda de tinta/
+# equipamento, normalmente com parcelamento em boleto) ──────────────────────
+#
+# Diferente do get_regime_serasa/is_cnpj_ativo isolados, essa funcao
+# olha TODOS os fatores juntos e devolve um veredito pronto, com
+# recomendacao de condicao de pagamento -- nao so "score alto/baixo".
+#
+# IMPORTANTE -- dados que a API atual NAO retorna e portanto NAO
+# entram nessa avaliacao (Michael pediu, mas nao existem nesse
+# produto Serasa contratado): "Movimentacao de Valores" (Ultima
+# Compra/Maior Fatura/Maior Acumulo) e "Historico de Pagamentos"
+# (pontualidade em faixas de dias). Se precisar disso, e outro
+# produto Serasa, precisa verificar com quem fornece o acesso.
+
+def avaliar_risco_negocio(data: dict) -> dict:
+    """
+    Retorna um veredito estruturado:
+    {
+      "nivel": "aprovado" | "aprovado_com_cautela" | "risco_alto" | "bloqueado",
+      "recomendacao": texto curto (condicao de pagamento sugerida),
+      "motivo": texto curto explicando o principal fator,
+      "fatores": [lista de strings, cada fator considerado],
+      "score": int,
+      "ativo": bool,
+    }
+    """
+    if not data or "error" in data:
+        return {
+            "nivel": "bloqueado",
+            "recomendacao": "Encaminhar para analise manual",
+            "motivo": "Consulta Serasa sem retorno valido",
+            "fatores": [],
+            "score": 0,
+            "ativo": False,
+        }
+
+    r = _get_report(data)
+    if not r:
+        return {
+            "nivel": "bloqueado",
+            "recomendacao": "Encaminhar para analise manual",
+            "motivo": "Relatorio Serasa vazio",
+            "fatores": [],
+            "score": 0,
+            "ativo": False,
+        }
+
+    fatores = []
+    pontos_negativos = 0  # quanto maior, pior
+
+    ativo = is_cnpj_ativo(data)
+    score = get_score(data)
+    regime = get_regime_serasa(data)
+    tempo_meses = 0
+    try:
+        tempo_txt = calcular_tempo_empresa(data)
+        # calcular_tempo_empresa devolve algo tipo "13 anos (desde ...)"
+        if "ano" in tempo_txt:
+            tempo_meses = int(tempo_txt.split(" ")[0]) * 12
+    except Exception:
+        pass
+
+    if not ativo:
+        return {
+            "nivel": "bloqueado",
+            "recomendacao": "Nao vender -- CNPJ inativo",
+            "motivo": "CNPJ inativo na Receita",
+            "fatores": ["CNPJ inativo"],
+            "score": score,
+            "ativo": False,
+        }
+
+    neg = r.get("negativeData", {})
+    facts = r.get("facts", {})
+
+    def _count(bloco):
+        return bloco.get("summary", {}).get("count", 0) or 0
+
+    def _balance(bloco):
+        return bloco.get("summary", {}).get("balance", 0) or 0
+
+    falencia = _count(facts.get("bankrupts", {}))
+    acoes = _count(facts.get("judgementFilings", {}))
+    protestos = _count(neg.get("notary", {}))
+    protestos_valor = _balance(neg.get("notary", {}))
+    dividas = _count(neg.get("collectionRecords", {}))
+    pefin = _count(neg.get("pefin", {}))
+    refin = _count(neg.get("refin", {}))
+    cheques = _count(neg.get("check", {}))
+
+    if falencia:
+        return {
+            "nivel": "bloqueado",
+            "recomendacao": "Nao vender -- falencia/recuperacao judicial",
+            "motivo": "Falencia ou recuperacao judicial em aberto",
+            "fatores": ["Falencia/Recuperacao Judicial"],
+            "score": score,
+            "ativo": True,
+        }
+
+    if acoes:
+        pontos_negativos += 3
+        fatores.append(f"{acoes} acao(oes) judicial(is)")
+    if protestos:
+        pontos_negativos += 2 if protestos_valor < 20000 else 4
+        fatores.append(f"{protestos} protesto(s), R$ {protestos_valor:,.2f}")
+    if dividas:
+        pontos_negativos += 2
+        fatores.append(f"{dividas} divida(s) vencida(s)")
+    if pefin:
+        pontos_negativos += 2
+        fatores.append(f"{pefin} pendencia(s) financeira(s) (PEFIN)")
+    if refin:
+        pontos_negativos += 1
+        fatores.append(f"{refin} restricao(oes) financeira(s) (REFIN)")
+    if cheques:
+        pontos_negativos += 1
+        fatores.append(f"{cheques} cheque(s) sem fundo")
+
+    # Padrao especifico que o Michael identificou: se a consulta de
+    # cheques normais E a de recheque (extraviados/sustados) vierem
+    # AMBAS "nada consta", e um sinal (nao prova) de possivel
+    # ocultacao via pagamento pra remover do cadastro. So soma pontos
+    # se a empresa ja tem OUTRA restricao tambem -- sozinho, "nada
+    # consta" duplo em empresa limpa e so uma empresa limpa mesmo.
+    check_hist = r.get("checkFilingsHistorical", {}).get("checkFilingsHistoricalResponse", [])
+    if cheques == 0 and not check_hist and pontos_negativos > 0:
+        pontos_negativos += 1
+        fatores.append("Cheques 'nada consta' duplicado (possivel ocultacao, checar manualmente)")
+
+    # Socio/administrador com restricao pessoal -- mesmo com a
+    # empresa limpa, e sinal de atencao (pode ser fachada nova).
+    socios_rest = get_socios_com_restricao(data)
+    if socios_rest:
+        pontos_negativos += 2
+        fatores.append(f"Socio(s) com restricao pessoal: {', '.join(socios_rest[:2])}")
+
+    # Muitas consultas recentes de banco/financeira no mesmo mes =
+    # sinal de busca de credito em varios lugares ao mesmo tempo.
+    consultas_mes = get_consultas_mercado(data)
+    if consultas_mes >= 10:
+        pontos_negativos += 2
+        fatores.append(f"{consultas_mes} consultas de credito no mes (alto volume)")
+    elif consultas_mes >= 6:
+        pontos_negativos += 1
+        fatores.append(f"{consultas_mes} consultas de credito no mes")
+
+    # Empresa muito nova (menos de 1 ano) reduz o limite de confianca
+    # independente do score.
+    if 0 < tempo_meses < 12:
+        pontos_negativos += 1
+        fatores.append("Empresa com menos de 1 ano")
+
+    if not fatores:
+        fatores.append("Nenhuma restricao encontrada")
+
+    # Veredito final: combina score numerico + pontos_negativos
+    # (fatores qualitativos que o score sozinho as vezes nao pesa
+    # direito pro nosso tipo de venda).
+    if score < 300 or pontos_negativos >= 6:
+        nivel = "risco_alto"
+        recomendacao = "Somente a vista ou com garantia adicional (nao liberar boleto parcelado)"
+    elif score < 600 or pontos_negativos >= 3:
+        nivel = "aprovado_com_cautela"
+        recomendacao = "Boleto com prazo curto (ate 30 dias) e valor moderado na primeira compra"
+    else:
+        nivel = "aprovado"
+        recomendacao = "Boleto parcelado normal, sem restricao adicional"
+
+    motivo = fatores[0] if pontos_negativos > 0 else "Score bom, sem restricoes relevantes"
+
+    return {
+        "nivel": nivel,
+        "recomendacao": recomendacao,
+        "motivo": motivo,
+        "fatores": fatores,
+        "score": score,
+        "ativo": True,
+    }
