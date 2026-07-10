@@ -1124,6 +1124,24 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     if not any(txt.startswith(p) for p in PREFIXOS_SISTEMA) and txt:
                         historico_lines.append(f"{role}: {txt[:300]}")
 
+                # Conversa real, estruturada com timestamp, pra virar
+                # historico de mensagens de verdade no Doss CRM (nao so
+                # um resumo em texto solto). Usa raw_history (nao
+                # 'messages') porque so ele tem created_at de cada
+                # mensagem individual.
+                mensagens_estruturadas = []
+                for msg in raw_history[-40:]:
+                    txt = (msg.content or "").strip()
+                    if not txt or any(txt.startswith(p) for p in PREFIXOS_SISTEMA):
+                        continue
+                    if txt.startswith("[CAMPANHA"):
+                        continue
+                    mensagens_estruturadas.append({
+                        "is_from_contact": msg.role == "user",
+                        "content": txt[:2000],
+                        "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                    })
+
                 email_info = lead_state.email or "nao informado"
                 tel_info = lead_state.telefone or phone
                 regime_info = ""
@@ -1167,6 +1185,7 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         produto=produto_lead, cidade=cidade_lead, origem=origem_lead,
                         valor_estimado=valor_estimado, tecnologia=tecnologia_lead,
                         perfil=perfil_lead, serasa_nota=cnpj_info,
+                        mensagens=mensagens_estruturadas,
                     )
                     if ok:
                         logger.info(f"[ARCCA] Card criado para {phone}")
