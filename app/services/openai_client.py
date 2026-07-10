@@ -614,6 +614,22 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     lead_state.cnpj_data = json.dumps(cnpj_data, ensure_ascii=False)
                     db.commit()
 
+                    # ANTES: cada branch abaixo tinha 'Pergunte EMAIL e
+                    # TELEFONE.' fixo no texto, sem checar se esses dados
+                    # ja estavam salvos em lead_state -- por isso o Bruno
+                    # pedia de novo mesmo ja tendo os dois, todo santa
+                    # vez que o CNPJ era processado.
+                    falta_email = not lead_state.email
+                    falta_tel = not lead_state.telefone
+                    if falta_email and falta_tel:
+                        pedido_dados = "Pergunte EMAIL e TELEFONE."
+                    elif falta_email:
+                        pedido_dados = "TELEFONE ja informado, NAO pergunte de novo. Pergunte so o EMAIL."
+                    elif falta_tel:
+                        pedido_dados = "EMAIL ja informado, NAO pergunte de novo. Pergunte so o TELEFONE."
+                    else:
+                        pedido_dados = "EMAIL e TELEFONE ja estao registrados -- NAO peca de novo em hipotese nenhuma. Encerre agradecendo e avisando que o time comercial vai entrar em contato."
+
                     if regime == "MEI":
                         parecer = "MEI"
                         instrucao = "Diga 'Para MEI nossa equipe faz analise personalizada. Vou encaminhar seus dados.'"
@@ -622,16 +638,16 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         instrucao = "Diga 'Vou encaminhar para nosso time verificar.' Nao mencione inativo."
                     elif negativos and score_s < 300:
                         parecer = "RISCO ALTO"
-                        instrucao = "NAO mencione restricoes. Diga 'Vou encaminhar para nosso time analisar as melhores condicoes.' Pergunte EMAIL e TELEFONE."
+                        instrucao = f"NAO mencione restricoes. Diga 'Vou encaminhar para nosso time analisar as melhores condicoes.' {pedido_dados}"
                     elif negativos:
                         parecer = "RESTRICOES PRESENTES"
-                        instrucao = "NAO mencione restricoes. Diga 'Vou encaminhar para nosso time.' Pergunte EMAIL e TELEFONE."
+                        instrucao = f"NAO mencione restricoes. Diga 'Vou encaminhar para nosso time.' {pedido_dados}"
                     elif regime in ("normal", "SIMPLES"):
                         parecer = "APROVADO — boleto liberado"
-                        instrucao = "APROVADO. Diga 'Posso seguir com parcelamento no boleto. Nosso consultor monta a proposta.' Pergunte EMAIL e TELEFONE."
+                        instrucao = f"APROVADO. Diga 'Posso seguir com parcelamento no boleto. Nosso consultor monta a proposta.' {pedido_dados}"
                     else:
                         parecer = "VERIFICAR"
-                        instrucao = "Diga 'Vou encaminhar para nosso time analisar.' Pergunte EMAIL e TELEFONE."
+                        instrucao = f"Diga 'Vou encaminhar para nosso time analisar.' {pedido_dados}"
 
                     cnpj_context = (
                         "[SISTEMA: Consulta Serasa realizada]\n"
@@ -640,8 +656,9 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         f"PARECER: {parecer}\n\n"
                         "NUNCA diga ao cliente que foi reprovado ou tem restricoes.\n"
                         f"{instrucao}\n"
-                        "Com email e telefone: encerre com mensagem de encaminhamento.\n"
+                        "Se ja tem email e telefone: encerre com mensagem de encaminhamento.\n"
                     )
+
 
                 db.add(Conversation(phone=phone, role="user", content=user_message))
                 db.add(Conversation(phone=phone, role="user", content=cnpj_context))
