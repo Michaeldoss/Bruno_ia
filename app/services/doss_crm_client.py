@@ -30,6 +30,10 @@ async def escalate_to_human(
     perfil: str = "",
     serasa_nota: str = "",
     mensagens: Optional[list] = None,
+    serasa_cnpj: Optional[str] = None,
+    serasa_score: Optional[int] = None,
+    serasa_negativos: Optional[bool] = None,
+    serasa_regime: Optional[str] = None,
 ) -> bool:
     """
     Envia o lead pro Doss CRM quando Bruno encerra a conversa.
@@ -38,9 +42,11 @@ async def escalate_to_human(
     O endpoint do lado do Doss CRM cuida de: criar/achar contato,
     criar conversa, criar card no pipeline em "Novo Lead" com rodizio
     de agente, salvar resumo/analise Serasa como nota atrelada ao
-    lead, e agora tambem grava a conversa real (mensagens) na Inbox,
-    se 'mensagens' for informado -- assim o agente que pegar o lead
-    ve o historico de verdade, nao so um resumo.
+    lead, grava a conversa real (mensagens) na Inbox, e agora tambem
+    grava o resultado do Serasa em campos proprios no CADASTRO DO
+    CONTATO (nao so como nota do lead) -- assim vendedor E financeiro
+    veem que ja foi consultado, sem precisar pagar de novo pela mesma
+    consulta.
     """
     if not DOSS_CRM_KEY:
         logger.error("Doss CRM: BRUNO_API_KEY nao configurada - abortando escalate_to_human")
@@ -58,6 +64,10 @@ async def escalate_to_human(
         "resumo": summary,
         "serasa_nota": serasa_nota,
         "mensagens": mensagens or [],
+        "serasa_cnpj": serasa_cnpj,
+        "serasa_score": serasa_score,
+        "serasa_negativos": serasa_negativos,
+        "serasa_regime": serasa_regime,
     }
 
     try:

@@ -1097,6 +1097,9 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
 
                 import json as _json
                 cnpj_info = ""
+                serasa_score = None
+                serasa_negativos = None
+                serasa_regime = None
                 if lead_state.cnpj_data:
                     try:
                         cd = _json.loads(lead_state.cnpj_data)
@@ -1107,6 +1110,9 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                                 _score = get_score(cd)
                                 _negativos = tem_negativos(cd)
                                 _ativo = is_cnpj_ativo(cd)
+                                serasa_score = _score
+                                serasa_negativos = _negativos
+                                serasa_regime = _regime
                                 if _regime == "MEI": _parecer = "MEI — ANALISE PERSONALIZADA"
                                 elif not _ativo: _parecer = "CNPJ INATIVO"
                                 elif _negativos and _score < 300: _parecer = f"RISCO ALTO — score {_score}/1000"
@@ -1186,6 +1192,10 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         valor_estimado=valor_estimado, tecnologia=tecnologia_lead,
                         perfil=perfil_lead, serasa_nota=cnpj_info,
                         mensagens=mensagens_estruturadas,
+                        serasa_cnpj=lead_state.cnpj or None,
+                        serasa_score=serasa_score,
+                        serasa_negativos=serasa_negativos,
+                        serasa_regime=serasa_regime,
                     )
                     if ok:
                         logger.info(f"[ARCCA] Card criado para {phone}")
