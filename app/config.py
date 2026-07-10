@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     SERASA_API_KEY: str = "stub"
     ARCCA_API_KEY: str = "stub"
 
+    # Doss CRM (substitui a integracao antiga com Arcca)
+    DOSS_CRM_LEADS_URL: str = "https://doss-crm.vercel.app/api/leads/create"
+    BRUNO_API_KEY: str = ""
+
     ENVIRONMENT: str = "development"
 
     class Config:

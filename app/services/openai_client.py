@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.models.database import SessionLocal, Lead, Conversation, LeadState
 from app.services.uniplus_client import uniplus_service
 from app.services.sheets_client import sheets_service
-from app.services.arcca_client import arcca_client
+from app.services.doss_crm_client import arcca_client
 from app.services.serasa_client import (
     consultar_cnpj as serasa_consultar,
     format_serasa_summary, get_regime_serasa,
