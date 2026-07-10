@@ -671,7 +671,15 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     lead.city = cidade_detectada
                     db.commit()
 
-        if not lead_state.telefone and lead_state.stage not in ("awaiting_cnpj", "cnpj_received"):
+        # ANTES: 'and lead_state.stage not in ("awaiting_cnpj", "cnpj_received")'
+        # bloqueava a extracao de telefone justamente durante e depois do
+        # fluxo de CNPJ -- que e o momento exato em que o Bruno pede
+        # "email e telefone" (ver instrucoes nas linhas ~625-634). Resultado:
+        # o cliente respondia, o Bruno dizia "anotado", mas o campo nunca
+        # era salvo de verdade, e no proximo turno o Bruno via o campo
+        # vazio de novo e voltava a pedir -- loop sem fim, card nunca
+        # chegava a ser criado no CRM.
+        if not lead_state.telefone:
             msg_clean = _re2.sub(r'\s', ' ', user_message)
             tel_match = _re2.search(r'(?:(?:\(?\d{2}\)?)[\s.-]?)(?:9[\s.-]?)?\d{4}[\s.-]?\d{4}(?!\d)', msg_clean)
             if tel_match:
