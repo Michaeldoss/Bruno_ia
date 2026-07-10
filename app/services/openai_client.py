@@ -590,9 +590,17 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         db.commit()
                         return ["Esse CNPJ parece invalido. Pode me confirmar os 14 digitos?"]
                     elif err == "cnpj_nao_encontrado":
+                        if lead_state.email and lead_state.telefone:
+                            pedido_dados_nf = "EMAIL e TELEFONE ja estao registrados -- NAO peca de novo. Encerre agradecendo e avisando que o time comercial vai entrar em contato."
+                        elif lead_state.email:
+                            pedido_dados_nf = "EMAIL ja informado, NAO pergunte de novo. Pergunte so o TELEFONE."
+                        elif lead_state.telefone:
+                            pedido_dados_nf = "TELEFONE ja informado, NAO pergunte de novo. Pergunte so o EMAIL."
+                        else:
+                            pedido_dados_nf = "Qual seu e-mail e telefone?"
                         cnpj_context = (
                             f"[SISTEMA: CNPJ {cnpj_clean} NAO ENCONTRADO na Serasa.]\n"
-                            "INSTRUCAO: Diga 'Vou encaminhar para nosso time analisar as melhores condicoes. Qual seu e-mail e telefone?'\n"
+                            f"INSTRUCAO: Diga 'Vou encaminhar para nosso time analisar as melhores condicoes.' {pedido_dados_nf}\n"
                         )
                     else:
                         lead_state.cnpj_data = json.dumps({"error": err}, ensure_ascii=False)
