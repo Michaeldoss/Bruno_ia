@@ -176,6 +176,56 @@ NUNCA force uma versão sem entender o volume do cliente.
 """,
     },
     # Usada quando não detecta nenhum código de campanha
+    # ── CAMPANHA — 40% OFF Tinta DGtex Premium/Lite (a vista) ────────────────
+    "dgtex40off": {
+        "nome":    "40% OFF DGtex Premium/Lite (a vista)",
+        "produto": "Tinta Sublimatica DGtex Premium / DGtex Lite",
+        "origem":  "Trafego Pago- WhatsApp",
+        "vigencia": (date(2026, 7, 1), date(2026, 7, 31)),
+        "ativa":   True,
+        "condicoes": "40% de desconto sobre o preco de tabela, pagamento A VISTA, frete FOB (por conta do cliente)",
+        "brinde":    "",
+        "desconto":  "40% sobre o preco de tabela das linhas DGtex Premium e DGtex Lite",
+        "contexto": """
+[CAMPANHA ATIVA: 40% OFF TINTA DGTEX PREMIUM/LITE]
+O cliente veio do anuncio de 40% off na tinta sublimatica DGtex.
+
+CONDICOES EXCLUSIVAS DESTA CAMPANHA (diferente do fluxo normal de
+maquina -- aqui e so tinta, condicao de pagamento e OUTRA):
+- Produtos: DGtex Premium e DGtex Lite (linhas de tinta sublimatica)
+- Desconto: 40% sobre o preco de tabela -- consulte o preco atual na
+  planilha (nao invente valor, sempre confira o preco vigente)
+- Pagamento: A VISTA (nao e o parcelamento padrao 40%+10x de maquina
+  -- aqui o 40% JA E o desconto, pago tudo de uma vez)
+- Frete: FOB -- o cliente e responsavel pelo frete (ou retira)
+- Conversao de impressora: a Doss auxilia remotamente com conversao
+  e criacao de perfil de cor SEM custo. Se o cliente pedir tecnico
+  presencial, os custos de conversao ficam por conta dele. Perto de
+  Joinville, pode ter disponibilidade de tecnico da equipe (com ou
+  sem custo, depende da agenda) -- NUNCA prometa tecnico ou custo
+  exato, diga que vai confirmar com a equipe tecnica.
+- Valida ate 31/07/2026
+
+COMO ABORDAR:
+1. Confirme que o cliente veio pelo anuncio do desconto na tinta
+2. Pergunta qual linha interessa (Premium ou Lite) e o volume que usa
+3. Deixe claro que e a vista com frete FOB -- nao ofereca parcelamento
+   pra esse desconto
+4. Sobre conversao: auxilio remoto é gratis; tecnico presencial tem
+   custo por conta do cliente, dependendo da disponibilidade da
+   equipe -- nunca garanta prazo ou valor de tecnico, diga que vai
+   verificar
+
+SCRIPT SUGERIDO:
+"Voce veio pela promocao certa! A tinta DGtex Premium e Lite estao
+com 40% de desconto sobre a tabela esse mes, pagamento a vista e
+frete por sua conta (FOB). A gente te ajuda remotamente com a
+conversao da impressora e o perfil de cor sem custo -- se precisar
+de tecnico presencial, isso tem custo a parte e depende da agenda da
+nossa equipe. Voce ja usa sublimatica hoje ou vai comecar agora?"
+""",
+    },
+
     "_padrao": {
         "nome":    "Atendimento Padrão",
         "produto": "",
@@ -211,6 +261,9 @@ def detectar_campanha(primeira_mensagem: str) -> dict:
         "combo sublimacao":    "combo_sublimacao",
         "combo sublimação":    "combo_sublimacao",
         "interesse no combo":  "combo_sublimacao",
+        "40% off na tinta sublimatica dgtex": "dgtex40off",
+        "anuncio de 40% off": "dgtex40off",
+        "40 off na tinta": "dgtex40off",
     }
 
     # Verifica gatilhos de frase primeiro
