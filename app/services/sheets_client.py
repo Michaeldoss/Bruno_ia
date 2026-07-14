@@ -183,7 +183,17 @@ class SheetsClient:
         tabela += "  Padrao: 40% entrada + ate 10x sem juros\n"
         tabela += "  DG 1908: 40% entrada + 18x sem juros (negociavel ate 36x)\n"
         tabela += "  Cartao: ate 12x (juros da operadora)\n"
-        tabela += "  Tintas: a vista ou 07/15/30/45/60 dias\n"
+        tabela += "\n"
+        tabela += "  TINTAS E SUPRIMENTOS -- prazo por faixa de VALOR DO PEDIDO (padrao):\n"
+        tabela += "    R$ 600,00  a R$ 750,00   -> 30 dias\n"
+        tabela += "    R$ 750,01  a R$ 1.100,00 -> 15/30\n"
+        tabela += "    R$ 1.100,01 a R$ 1.700,00 -> 15/30/45\n"
+        tabela += "    R$ 1.700,01 a R$ 2.900,00 -> 15/30/45/60\n"
+        tabela += "    Acima de R$ 2.900,01      -> 30/60\n"
+        tabela += "    Pedidos abaixo de R$ 600,00: a vista.\n"
+        tabela += "    Esses prazos podem ser AMPLIADOS conforme volume/recorrencia do\n"
+        tabela += "    cliente -- isso e negociado com o time comercial, NUNCA prometa\n"
+        tabela += "    prazo maior que a tabela sozinho.\n"
 
         return tabela
 
