@@ -133,8 +133,19 @@ async def _processar_uma_os(client: httpx.AsyncClient, os_item: dict):
     }
 
     try:
-        contato = await get_customer_by_cnpj(cnpj_cpf)
-        telefone_raw = contato.get("telefone") or contato.get("celular") if contato else None
+        # PRIORIDADE 1: telefone WhatsApp direto da própria OS (campo "extra3",
+        # ativado no Uniplus em 16/07/2026 — mais confiável que o cadastro do
+        # cliente, que pode estar desatualizado). Só existe em OS criadas
+        # depois dessa data.
+        telefone_raw = os_item.get("extra3") or None
+
+        if not telefone_raw:
+            # PRIORIDADE 2 (fallback p/ OS antigas sem extra3): busca no
+            # cadastro do cliente por CNPJ/CPF. Menos confiável — cadastro
+            # pode estar desatualizado ou o cliente pode não ter telefone lá.
+            contato = await get_customer_by_cnpj(cnpj_cpf)
+            telefone_raw = contato.get("telefone") or contato.get("celular") if contato else None
+
         telefone = _formatar_telefone_e164(telefone_raw)
 
         if not telefone:
