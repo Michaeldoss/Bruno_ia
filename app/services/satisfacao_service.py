@@ -87,6 +87,27 @@ def _formatar_telefone_e164(telefone_raw: str) -> Optional[str]:
     return f"+{digitos}"
 
 
+def _normalizar_para_comparacao(telefone: str) -> str:
+    """
+    Normaliza número BR pra tolerar a ambiguidade do 9º dígito do celular.
+    Alguém pode digitar '(47) 99230-7367' (9 dígitos locais) ou
+    '(47) 9230-7367' (8 dígitos, formato antigo/linha fixa) pro MESMO
+    WhatsApp — o 9 extra é opcional dependendo de quem cadastrou.
+
+    Forma canônica: DDD (2) + 8 dígitos finais, sem DDI, sem o 9 extra.
+    Usar SÓ pra comparação/matching — nunca pra enviar mensagem (perde
+    o DDI e pode quebrar números de fora do Brasil).
+    """
+    if not telefone:
+        return ""
+    d = "".join(c for c in str(telefone) if c.isdigit())
+    if d.startswith("55") and len(d) > 10:
+        d = d[2:]  # remove DDI
+    if len(d) == 11 and d[2] == "9":
+        d = d[:2] + d[3:]  # remove o 9 extra (DDD + 9 + 8 digitos -> DDD + 8 digitos)
+    return d[-10:] if len(d) >= 10 else d  # garante DDD + 8 digitos (10) como forma final
+
+
 async def _ja_notificada(client: httpx.AsyncClient, numero_os: str) -> bool:
     try:
         r = await client.get(
@@ -168,6 +189,7 @@ async def _processar_uma_os(client: httpx.AsyncClient, os_item: dict):
             return
 
         registro["telefone"] = telefone.lstrip("+")  # guarda sem o + pra bater com o normalizePhone do CRM
+        registro["telefone_normalizado"] = _normalizar_para_comparacao(telefone)
 
         await twilio_service.send_whatsapp_template_message(
             telefone,
@@ -236,6 +258,7 @@ async def verificar_resposta_satisfacao(phone: str, body: str) -> bool:
         return False
 
     telefone_limpo = "".join(c for c in phone if c.isdigit())
+    telefone_normalizado = _normalizar_para_comparacao(telefone_limpo)
     agora = datetime.now(timezone.utc).isoformat()
 
     try:
@@ -244,7 +267,7 @@ async def verificar_resposta_satisfacao(phone: str, body: str) -> bool:
                 f"{SUPABASE_URL}/rest/v1/{TABELA}",
                 headers=_headers_supabase(),
                 params={
-                    "telefone": f"eq.{telefone_limpo}",
+                    "telefone_normalizado": f"eq.{telefone_normalizado}",
                     "status_pesquisa": "eq.aguardando_resposta",
                     "expira_em": f"gte.{agora}",
                     "order": "enviado_em.desc",
