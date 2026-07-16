@@ -34,6 +34,11 @@ INTERVALO_LOOP_SEGUNDOS = 600  # 10 min
 HORAS_JANELA_BUSCA = 6         # margem de segurança sobre o intervalo do loop
 DIAS_EXPIRACAO_PESQUISA = 3
 
+# Template aprovado pela Meta (Twilio Content API) — obrigatório porque
+# a pesquisa é sempre business-iniciada fora da janela de 24h de
+# atendimento (erro 63016: "Outside messaging window").
+TEMPLATE_CONTENT_SID = "HX221083c9e20ca582281f6375fd6c0cc5"
+
 TABELA = "os_notificacoes_whatsapp"
 
 
@@ -49,6 +54,13 @@ def _headers_supabase(patch: bool = False) -> dict:
 
 
 def _montar_mensagem(numero_os: str) -> str:
+    """
+    NÃO USADA MAIS PARA ENVIO — texto livre é rejeitado pela Meta fora da
+    janela de 24h (erro 63016). Mantida só como referência do texto que
+    também está cadastrado no Template aprovado (TEMPLATE_CONTENT_SID).
+    Se precisar mudar o texto, mude nos DOIS lugares: aqui (documentação)
+    e no Twilio Content Template Builder (o que realmente é enviado).
+    """
     return (
         f"Olá! A sua Ordem de Serviço nº {numero_os} foi finalizada.\n\n"
         "De 0 a 5, sendo 0 ruim e 5 excelente, como você avalia nosso atendimento?\n\n"
@@ -157,7 +169,11 @@ async def _processar_uma_os(client: httpx.AsyncClient, os_item: dict):
 
         registro["telefone"] = telefone.lstrip("+")  # guarda sem o + pra bater com o normalizePhone do CRM
 
-        await twilio_service.send_whatsapp_message(telefone, _montar_mensagem(numero_os))
+        await twilio_service.send_whatsapp_template_message(
+            telefone,
+            TEMPLATE_CONTENT_SID,
+            {"1": numero_os},
+        )
 
         registro["status_envio"] = "enviado"
         registro["status_pesquisa"] = "aguardando_resposta"
