@@ -243,24 +243,43 @@ async def list_os_recentes(horas_janela: int = 6) -> list:
         agora = datetime.now(timezone.utc)
         inicio = agora - timedelta(hours=horas_janela)
 
+        todas = []
+        offset = 0
+        pagina_tamanho = 100
+
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(
-                f"{UNIPLUS_BASE_URL}{UNIPLUS_OS_ENDPOINT}",
-                headers=hdrs,
-                params={
-                    "agendamento.gte": inicio.strftime("%Y-%m-%d"),
-                    "agendamento.lte": agora.strftime("%Y-%m-%d"),
-                    "limit": "200",
-                    "offset": "0",
-                },
-            )
-            if r.status_code >= 400:
-                logger.warning(f"Uniplus list_os_recentes: {r.status_code} {r.text[:200]}")
-                return []
-            data = r.json()
-            if isinstance(data, list):
-                return data
-            return data.get("data") or data.get("dados") or data.get("items") or data.get("results") or []
+            while True:
+                r = await client.get(
+                    f"{UNIPLUS_BASE_URL}{UNIPLUS_OS_ENDPOINT}",
+                    headers=hdrs,
+                    params={
+                        "agendamento.gte": inicio.strftime("%Y-%m-%d"),
+                        "agendamento.lte": agora.strftime("%Y-%m-%d"),
+                        "limit": str(pagina_tamanho),
+                        "offset": str(offset),
+                    },
+                )
+                if r.status_code >= 400:
+                    logger.warning(f"Uniplus list_os_recentes: {r.status_code} {r.text[:200]}")
+                    break
+
+                data = r.json()
+                if isinstance(data, list):
+                    pagina = data
+                else:
+                    pagina = data.get("data") or data.get("dados") or data.get("items") or data.get("results") or []
+
+                todas.extend(pagina)
+
+                if len(pagina) < pagina_tamanho:
+                    break  # última página
+                offset += pagina_tamanho
+
+                if offset > 1000:  # trava de segurança, evita loop infinito por bug de paginação
+                    logger.warning("Uniplus list_os_recentes: parou em 1000 registros (trava de segurança)")
+                    break
+
+        return todas
     except Exception as e:
         logger.error(f"Uniplus list_os_recentes: {e}")
         return []
