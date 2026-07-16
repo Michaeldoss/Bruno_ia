@@ -326,7 +326,11 @@ async def list_os_finalizadas(horas_janela: int = 3, dias_agendamento: int = 7) 
         try:
             data_evento = datetime.fromisoformat(str(data_evento_raw).replace("Z", "+00:00"))
             if data_evento.tzinfo is None:
-                data_evento = data_evento.replace(tzinfo=timezone.utc)
+                # A API do Uniplus devolve horários em Brasília (UTC-3), sem
+                # sufixo de fuso — NÃO é UTC. Tratar como UTC (bug anterior)
+                # fazia o horário real parecer 3h mais cedo do que é de
+                # verdade, jogando eventos recentes pra fora da janela.
+                data_evento = data_evento.replace(tzinfo=timezone(timedelta(hours=-3)))
         except Exception:
             resultado.append(os_item)
             continue
