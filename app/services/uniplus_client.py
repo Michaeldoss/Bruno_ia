@@ -229,10 +229,14 @@ async def test_connection() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Lista OS dentro de uma janela de datas (usado pela Pesquisa de Satisfação)
 # ---------------------------------------------------------------------------
-async def list_os_recentes(horas_janela: int = 6) -> list:
+async def list_os_recentes(dias_agendamento: int = 7) -> list:
     """
-    Busca OS agendadas dentro da janela de horas informada e retorna
-    apenas as cruas (sem filtrar status — quem filtra é a chamada).
+    Busca OS agendadas dentro de uma janela larga de dias (não horas —
+    uma OS pode ser agendada num dia e finalizada só no dia seguinte
+    ou depois, então a busca por agendamento precisa de folga).
+    Quem decide o que é "recente de verdade" é list_os_finalizadas,
+    usando a data real do último evento (dataUltmoEvento), não a
+    data de agendamento.
     A API Uniplus não filtra por status via parâmetro (confirmado no
     .env do conferencia_os_drive: UNIPLUS_STATUS_PARAM vazio), então
     o filtro de status precisa ser feito depois, no código.
@@ -241,7 +245,7 @@ async def list_os_recentes(horas_janela: int = 6) -> list:
         from datetime import datetime, timedelta, timezone
         hdrs = await _headers()
         agora = datetime.now(timezone.utc)
-        inicio = agora - timedelta(hours=horas_janela)
+        inicio = agora - timedelta(days=dias_agendamento)
 
         todas = []
         offset = 0
@@ -285,10 +289,45 @@ async def list_os_recentes(horas_janela: int = 6) -> list:
         return []
 
 
-async def list_os_finalizadas(horas_janela: int = 6) -> list:
-    """OS dentro da janela cujo status já é 'Finalizada'."""
-    todas = await list_os_recentes(horas_janela)
-    return [os for os in todas if str(os.get("status")) == UNIPLUS_STATUS_FINALIZADA]
+async def list_os_finalizadas(horas_janela: int = 3, dias_agendamento: int = 7) -> list:
+    """
+    OS com status 'Finalizada' cujo ÚLTIMO EVENTO (dataUltmoEvento —
+    o momento real da finalização, não o agendamento) caiu dentro das
+    últimas `horas_janela` horas. A busca no Uniplus usa uma janela
+    larga de `dias_agendamento` pra não perder OS agendadas há dias
+    mas finalizadas só agora; a precisão de "é recente mesmo" é
+    aplicada aqui, no código, usando o timestamp real de finalização.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    todas = await list_os_recentes(dias_agendamento)
+    agora = datetime.now(timezone.utc)
+    corte = agora - timedelta(hours=horas_janela)
+
+    resultado = []
+    for os_item in todas:
+        if str(os_item.get("status")) != UNIPLUS_STATUS_FINALIZADA:
+            continue
+
+        data_evento_raw = os_item.get("dataUltmoEvento") or os_item.get("fimServico")
+        if not data_evento_raw:
+            # sem data de evento pra comparar — inclui por segurança,
+            # o dedup do Supabase evita reenvio se já foi processada antes
+            resultado.append(os_item)
+            continue
+
+        try:
+            data_evento = datetime.fromisoformat(str(data_evento_raw).replace("Z", "+00:00"))
+            if data_evento.tzinfo is None:
+                data_evento = data_evento.replace(tzinfo=timezone.utc)
+        except Exception:
+            resultado.append(os_item)
+            continue
+
+        if data_evento >= corte:
+            resultado.append(os_item)
+
+    return resultado
 
 
 # ---------------------------------------------------------------------------
