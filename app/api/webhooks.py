@@ -201,17 +201,22 @@ async def trigger_finance_collection(background_tasks: BackgroundTasks):
 
 
 @router.post("/satisfacao/trigger")
-async def trigger_satisfacao():
+async def trigger_satisfacao(horas: int = 3):
     """
     Roda manualmente uma verificação de OS finalizadas + envio de pesquisa,
     sem esperar o loop de 10 min. Uso: teste manual.
+
+    Parâmetro opcional ?horas=N alarga a janela de "finalizada recentemente"
+    pra testes (ex: ?horas=72 pega qualquer OS finalizada nos últimos 3 dias).
+    Em produção o loop automático sempre usa o padrão (3h).
+
     Roda de forma síncrona (não em background) pra você ver o resultado
     direto na resposta, incluindo qualquer erro.
     """
-    logger.info("[SATISFACAO] Disparo manual solicitado.")
+    logger.info(f"[SATISFACAO] Disparo manual solicitado (janela={horas}h).")
     try:
-        await _tick_satisfacao()
-        return {"status": "ok", "mensagem": "Verificação executada. Confira os logs do Render pra detalhes."}
+        await _tick_satisfacao(horas_janela=horas)
+        return {"status": "ok", "mensagem": f"Verificação executada (janela={horas}h). Confira os logs do Render pra detalhes."}
     except Exception as e:
         logger.error(f"[SATISFACAO] Erro no disparo manual: {e}")
         return {"status": "erro", "erro": str(e)}

@@ -154,12 +154,13 @@ async def _processar_uma_os(client: httpx.AsyncClient, os_item: dict):
     await _gravar_resultado(client, registro)
 
 
-async def _tick():
+async def _tick(horas_janela: int = HORAS_JANELA_BUSCA):
     try:
-        finalizadas = await list_os_finalizadas(HORAS_JANELA_BUSCA)
+        finalizadas = await list_os_finalizadas(horas_janela)
         if not finalizadas:
+            logger.info(f"[SATISFACAO] Nenhuma OS finalizada na janela de {horas_janela}h.")
             return
-        logger.info(f"[SATISFACAO] {len(finalizadas)} OS finalizada(s) na janela — verificando pendências.")
+        logger.info(f"[SATISFACAO] {len(finalizadas)} OS finalizada(s) na janela de {horas_janela}h — verificando pendências.")
         async with httpx.AsyncClient(timeout=15) as client:
             for os_item in finalizadas:
                 await _processar_uma_os(client, os_item)
