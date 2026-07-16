@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     UNIPLUS_CLIENT_SECRET: str = "41c20f17-2bd7-4c4c-b69f-b82981b5b5b3"
     UNIPLUS_FILIAL: str = "2"
     UNIPLUS_LOCAL_ESTOQUE: str = "2"
+    UNIPLUS_OS_ENDPOINT: str = "/public-api/v1/ordem-servico"
+    UNIPLUS_STATUS_FINALIZADA: str = "3"
+
+    # Supabase (Doss CRM) — usado apenas pela Pesquisa de Satisfação,
+    # pra gravar e ler o resultado que aparece no dashboard do CRM.
+    SUPABASE_URL: str = "https://dojisexdgitoxluuawgc.supabase.co"
+    SUPABASE_SERVICE_ROLE_KEY: str = "stub"
 
     GOOGLE_SHEET_ID: str = "stub"
     GOOGLE_SHEET_CSV_URL: str = "stub"

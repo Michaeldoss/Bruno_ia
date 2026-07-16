@@ -13,6 +13,8 @@ UNIPLUS_CLIENT_ID = settings.UNIPLUS_CLIENT_ID
 UNIPLUS_CLIENT_SECRET = settings.UNIPLUS_CLIENT_SECRET
 UNIPLUS_FILIAL = settings.UNIPLUS_FILIAL
 UNIPLUS_LOCAL_ESTOQUE = settings.UNIPLUS_LOCAL_ESTOQUE
+UNIPLUS_OS_ENDPOINT = settings.UNIPLUS_OS_ENDPOINT
+UNIPLUS_STATUS_FINALIZADA = settings.UNIPLUS_STATUS_FINALIZADA
 
 # ---------------------------------------------------------------------------
 # Cache de token OAuth2 — evita gerar novo token a cada chamada
@@ -222,6 +224,87 @@ async def test_connection() -> Dict[str, Any]:
         return {"ok": True, "conectado": True, "token_preview": token[:20] + "..."}
     except Exception as e:
         return {"ok": False, "conectado": False, "erro": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Lista OS dentro de uma janela de datas (usado pela Pesquisa de Satisfação)
+# ---------------------------------------------------------------------------
+async def list_os_recentes(horas_janela: int = 6) -> list:
+    """
+    Busca OS agendadas dentro da janela de horas informada e retorna
+    apenas as cruas (sem filtrar status — quem filtra é a chamada).
+    A API Uniplus não filtra por status via parâmetro (confirmado no
+    .env do conferencia_os_drive: UNIPLUS_STATUS_PARAM vazio), então
+    o filtro de status precisa ser feito depois, no código.
+    """
+    try:
+        from datetime import datetime, timedelta, timezone
+        hdrs = await _headers()
+        agora = datetime.now(timezone.utc)
+        inicio = agora - timedelta(hours=horas_janela)
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                f"{UNIPLUS_BASE_URL}{UNIPLUS_OS_ENDPOINT}",
+                headers=hdrs,
+                params={
+                    "agendamento.gte": inicio.strftime("%Y-%m-%d"),
+                    "agendamento.lte": agora.strftime("%Y-%m-%d"),
+                    "limit": "200",
+                    "offset": "0",
+                },
+            )
+            if r.status_code >= 400:
+                logger.warning(f"Uniplus list_os_recentes: {r.status_code} {r.text[:200]}")
+                return []
+            data = r.json()
+            if isinstance(data, list):
+                return data
+            return data.get("data") or data.get("dados") or data.get("items") or data.get("results") or []
+    except Exception as e:
+        logger.error(f"Uniplus list_os_recentes: {e}")
+        return []
+
+
+async def list_os_finalizadas(horas_janela: int = 6) -> list:
+    """OS dentro da janela cujo status já é 'Finalizada'."""
+    todas = await list_os_recentes(horas_janela)
+    return [os for os in todas if str(os.get("status")) == UNIPLUS_STATUS_FINALIZADA]
+
+
+# ---------------------------------------------------------------------------
+# Busca cliente por CNPJ/CPF (usado pela Pesquisa de Satisfação pra achar
+# o telefone a partir do cliente vinculado à OS, já que a OS não traz
+# telefone direto — só cnpjCpfCliente / idCliente).
+#
+# ATENÇÃO: o parâmetro 'cnpjCpf' é uma suposição — o único uso confirmado
+# desse endpoint no código existente é por 'telefone' (get_customer_by_phone
+# acima). TESTAR contra a API real antes de confiar neste retorno.
+# ---------------------------------------------------------------------------
+async def get_customer_by_cnpj(cnpj_cpf: str) -> Optional[Dict[str, Any]]:
+    if not cnpj_cpf:
+        return None
+    try:
+        hdrs = await _headers()
+        cnpj_clean = "".join(c for c in cnpj_cpf if c.isdigit())
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{UNIPLUS_BASE_URL}/public-api/v1/contatos",
+                headers=hdrs,
+                params={"cnpjCpf": cnpj_clean, "limit": "1"},
+            )
+            if r.status_code >= 400:
+                logger.warning(f"Uniplus get_customer_by_cnpj({cnpj_clean}): {r.status_code} {r.text[:150]}")
+                return None
+            data = r.json()
+            if isinstance(data, list) and data:
+                return data[0]
+            if isinstance(data, dict) and data.get("id"):
+                return data
+            return None
+    except Exception as e:
+        logger.error(f"Uniplus get_customer_by_cnpj({cnpj_cpf}): {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------

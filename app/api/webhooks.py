@@ -6,6 +6,7 @@ from app.services.finance_service import finance_service
 from app.services.buffer_service import message_buffer
 from app.core.media_catalog import find_media_key_for_message, MEDIA_CATALOG
 from app.services.followup_service import resetar_followup
+from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
 from app.models.database import SessionLocal, Lead, MediaSent, Conversation
 import logging
 import asyncio
@@ -67,6 +68,14 @@ async def twilio_webhook(
 
     phone = From.replace("whatsapp:", "")
     print(f"\n>>> RECEBIDO DE: {From} | SID: {MessageSid}")
+
+    # ── Pesquisa de satisfação: intercepta nota 0-5 antes de qualquer
+    # outra coisa. Se for resposta válida de uma pesquisa pendente,
+    # encerra aqui — não reseta follow-up, não vai pro Bruno/IA, não
+    # aparece na conversa normal (fica só no dashboard de satisfação).
+    if Body and await verificar_resposta_satisfacao(phone, Body):
+        resp = MessagingResponse()
+        return Response(content=str(resp), media_type="application/xml")
 
     if MediaUrl0 and MediaContentType0 and "audio" in MediaContentType0:
         resetar_followup(phone)
@@ -189,3 +198,20 @@ async def trigger_finance_collection(background_tasks: BackgroundTasks):
     logger.info("Disparo manual da régua de cobrança solicitado.")
     background_tasks.add_task(finance_service.run_daily_collection)
     return {"status": "Processamento da régua de cobrança iniciado em segundo plano."}
+
+
+@router.post("/satisfacao/trigger")
+async def trigger_satisfacao():
+    """
+    Roda manualmente uma verificação de OS finalizadas + envio de pesquisa,
+    sem esperar o loop de 10 min. Uso: teste manual.
+    Roda de forma síncrona (não em background) pra você ver o resultado
+    direto na resposta, incluindo qualquer erro.
+    """
+    logger.info("[SATISFACAO] Disparo manual solicitado.")
+    try:
+        await _tick_satisfacao()
+        return {"status": "ok", "mensagem": "Verificação executada. Confira os logs do Render pra detalhes."}
+    except Exception as e:
+        logger.error(f"[SATISFACAO] Erro no disparo manual: {e}")
+        return {"status": "erro", "erro": str(e)}
