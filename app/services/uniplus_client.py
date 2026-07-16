@@ -251,6 +251,13 @@ async def list_os_recentes(dias_agendamento: int = 7) -> list:
         offset = 0
         pagina_tamanho = 100
 
+        # IMPORTANTE: a API trata datas sem hora como 00:00:00. Se gte e lte
+        # forem o mesmo dia, a janela vira largura zero e retorna sempre
+        # vazio — descoberto testando direto (agendamento.gte=X e lte=X no
+        # mesmo dia sempre retornava []). Por isso lte usa o dia SEGUINTE,
+        # cobrindo o dia de "agora" por inteiro.
+        fim_busca = (agora + timedelta(days=1)).strftime("%Y-%m-%d")
+
         async with httpx.AsyncClient(timeout=15) as client:
             while True:
                 r = await client.get(
@@ -258,7 +265,7 @@ async def list_os_recentes(dias_agendamento: int = 7) -> list:
                     headers=hdrs,
                     params={
                         "agendamento.gte": inicio.strftime("%Y-%m-%d"),
-                        "agendamento.lte": agora.strftime("%Y-%m-%d"),
+                        "agendamento.lte": fim_busca,
                         "limit": str(pagina_tamanho),
                         "offset": str(offset),
                     },
@@ -335,29 +342,31 @@ async def list_os_finalizadas(horas_janela: int = 3, dias_agendamento: int = 7) 
 # o telefone a partir do cliente vinculado à OS, já que a OS não traz
 # telefone direto — só cnpjCpfCliente / idCliente).
 #
-# ATENÇÃO: o parâmetro 'cnpjCpf' é uma suposição — o único uso confirmado
-# desse endpoint no código existente é por 'telefone' (get_customer_by_phone
-# acima). TESTAR contra a API real antes de confiar neste retorno.
+# CONFIRMADO testando direto contra a API real:
+# - Endpoint correto é /public-api/v1/entidades (não /contatos, que nem
+#   existe — descoberto que get_customer_by_phone acima provavelmente
+#   nunca funcionou de verdade em produção).
+# - O CNPJ/CPF precisa ir COM pontuação (ex: "40.570.894/0001-70"),
+#   mandar só dígitos retorna vazio.
 # ---------------------------------------------------------------------------
 async def get_customer_by_cnpj(cnpj_cpf: str) -> Optional[Dict[str, Any]]:
     if not cnpj_cpf:
         return None
     try:
         hdrs = await _headers()
-        cnpj_clean = "".join(c for c in cnpj_cpf if c.isdigit())
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(
-                f"{UNIPLUS_BASE_URL}/public-api/v1/contatos",
+                f"{UNIPLUS_BASE_URL}/public-api/v1/entidades",
                 headers=hdrs,
-                params={"cnpjCpf": cnpj_clean, "limit": "1"},
+                params={"cnpjCpf": cnpj_cpf, "limit": "1"},
             )
             if r.status_code >= 400:
-                logger.warning(f"Uniplus get_customer_by_cnpj({cnpj_clean}): {r.status_code} {r.text[:150]}")
+                logger.warning(f"Uniplus get_customer_by_cnpj({cnpj_cpf}): {r.status_code} {r.text[:150]}")
                 return None
             data = r.json()
             if isinstance(data, list) and data:
                 return data[0]
-            if isinstance(data, dict) and data.get("id"):
+            if isinstance(data, dict) and data.get("codigo"):
                 return data
             return None
     except Exception as e:

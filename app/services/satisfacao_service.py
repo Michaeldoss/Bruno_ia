@@ -57,10 +57,17 @@ def _montar_mensagem(numero_os: str) -> str:
 
 
 def _formatar_telefone_e164(telefone_raw: str) -> Optional[str]:
-    """Uniplus provavelmente devolve sem DDI. Twilio precisa de E.164 (+55...)."""
+    """
+    Uniplus devolve telefone sujo, tipo '(0xx47)99110-5217' — o '0xx' é
+    um prefixo de discagem antigo (não faz parte do número). Removê-lo
+    ANTES de extrair dígitos, senão sobra um '0' a mais na frente do DDD.
+    Twilio precisa do formato E.164 (+55...).
+    """
     if not telefone_raw:
         return None
-    digitos = "".join(c for c in str(telefone_raw) if c.isdigit())
+    import re
+    texto = re.sub(r"0xx", "", str(telefone_raw), flags=re.IGNORECASE)
+    digitos = "".join(c for c in texto if c.isdigit())
     if not digitos:
         return None
     if len(digitos) <= 11:
