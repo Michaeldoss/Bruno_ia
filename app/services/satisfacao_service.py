@@ -114,6 +114,8 @@ async def _processar_uma_os(client: httpx.AsyncClient, os_item: dict):
         return
 
     nome_cliente = os_item.get("nomeCliente") or ""
+    nome_atendente = os_item.get("nomeAtendente") or ""
+    codigo_atendente = os_item.get("codigoAtendente") or ""
     cnpj_cpf = os_item.get("cnpjCpfCliente") or ""
     id_cliente = os_item.get("idCliente") or ""
 
@@ -121,6 +123,8 @@ async def _processar_uma_os(client: httpx.AsyncClient, os_item: dict):
         "numero_os": numero_os,
         "id_cliente": str(id_cliente or ""),
         "nome_cliente": nome_cliente,
+        "nome_atendente": nome_atendente.strip() if nome_atendente else None,
+        "codigo_atendente": str(codigo_atendente or "") or None,
         "cnpj_cpf_cliente": cnpj_cpf,
         "telefone": None,
         "status_envio": "falha",
