@@ -5,6 +5,7 @@ from app.config import get_settings
 from app.api.webhooks import router as webhook_router
 from app.services.followup_service import start_followup_service
 from app.services.satisfacao_service import start_satisfacao_service
+from app.services.finance_service import start_cobranca_service
 from app.models.database import SessionLocal, Conversation, Lead, LeadState, UsageLog
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -17,6 +18,7 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     start_followup_service()
     start_satisfacao_service()
+    start_cobranca_service()
     yield
 
 

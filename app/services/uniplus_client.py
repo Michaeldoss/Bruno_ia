@@ -379,6 +379,39 @@ async def get_customer_by_cnpj(cnpj_cpf: str) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Busca títulos a receber por data de vencimento (usado pela régua de
+# cobrança). ENDPOINT AINDA NÃO CONFIRMADO — testei mais de 20 variações
+# de nome (/titulos-receber, /contas-receber, /titulos-a-receber, etc.)
+# e nenhuma existe na API real do Uniplus. Precisa confirmar com o
+# suporte do Uniplus o nome certo antes de usar isso de verdade.
+#
+# Assim que souber o endpoint certo, troque a linha da URL abaixo —
+# o resto (paginação, filtro por data) já está pronto no padrão que
+# funcionou pra ordem-servico.
+# ---------------------------------------------------------------------------
+async def get_titulos_a_receber(data_vencimento) -> list:
+    try:
+        hdrs = await _headers()
+        data_str = data_vencimento.strftime("%Y-%m-%d") if hasattr(data_vencimento, "strftime") else str(data_vencimento)
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                f"{UNIPLUS_BASE_URL}/public-api/v1/ENDPOINT_AINDA_NAO_CONFIRMADO",  # TODO: substituir
+                headers=hdrs,
+                params={"vencimento": data_str, "limit": "100"},
+            )
+            if r.status_code >= 400:
+                logger.warning(f"Uniplus get_titulos_a_receber: {r.status_code} {r.text[:200]}")
+                return []
+            data = r.json()
+            if isinstance(data, list):
+                return data
+            return data.get("data") or data.get("dados") or data.get("items") or data.get("results") or []
+    except Exception as e:
+        logger.error(f"Uniplus get_titulos_a_receber: {e}")
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Instância compatível com o código atual do Bruno
 # ---------------------------------------------------------------------------
 class UniplusService:
