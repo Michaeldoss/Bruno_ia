@@ -245,8 +245,11 @@ de tinta compativel).
 MODELOS ELEGIVEIS E CUSTO DE CONVERSAO (SOMENTE ESTES MODELOS):
 - F6200 / F6070 / F6370: conversao remove o chip definitivamente.
   Custo: R$1.700,00 + placa fornecida pelo cliente.
-  Alternativa mais barata para este trio: CHIP AVULSO R$35,00/unidade
-  (nao remove a trava -- pode precisar trocar chip a cada recarga).
+  Alternativa mais barata: CHIP AVULSO R$35,00/unidade -- disponivel
+  SOMENTE para F6200 e F6070 (NAO disponivel para F6370, que so tem
+  a opcao de conversao de placa R$1.700).
+  Chip avulso nao remove a trava -- pode precisar trocar a cada
+  recarga.
 - F9470: conversao remove o chip definitivamente.
   Custo: R$2.800,00 + placa fornecida pelo cliente.
 - F9470-H: conversao mantem uso de chip (nao remove a trava).
@@ -303,8 +306,9 @@ COMO ABORDAR:
 SCRIPT SUGERIDO:
 "Voce veio pela campanha certa! Pra conversao a gente atende os
 modelos F6200, F6070, F6370, F9470 e F9470-H, cada um com um custo
-especifico de conversao, e a placa fica por conta do cliente. Qual e
-o seu modelo exato? E me passa tambem o preco da sua tinta Epson
+especifico de conversao, e a placa fica por conta do cliente. Se for
+F6200 ou F6070 ainda tem a opcao de chip avulso, mais em conta. Qual
+e o seu modelo exato? E me passa tambem o preco da sua tinta Epson
 atual, a largura de impressao e quantos metros voce imprime por mes
 -- assim calculo sua economia real com a DGtex."
 
