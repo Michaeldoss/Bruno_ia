@@ -229,11 +229,11 @@ nossa equipe. Voce ja usa sublimatica hoje ou vai comecar agora?"
     # ── CAMPANHA — Conversão Epson F6200/F6070/F6370 ─────────────────────────
     "conversao_epson": {
         "nome":    "Conversão Epson para Compatível",
-        "produto": "Chip/Conversão de placa Epson F6200/F6070/F6370 + Tinta DGtex Premium",
+        "produto": "Conversão Epson F6200/F6070/F6370/F9470/F9470-H + Tinta DGtex",
         "origem":  "Trafego Pago- WhatsApp",
         "vigencia": None,
         "ativa":   True,
-        "condicoes": "Chip avulso a vista R$35,00/unidade ou conversao de placa R$1.700,00",
+        "condicoes": "Conversao R$1.700 (F6200/F6070/F6370), R$2.800 (F9470), R$1.900 (F9470-H) + placa do cliente",
         "brinde":    "",
         "desconto":  "",
         "contexto": """
@@ -242,51 +242,78 @@ O cliente veio do anuncio de conversao de impressora Epson para usar
 tinta compativel (nao gera desconto, e servico de conversao + venda
 de tinta compativel).
 
-MODELOS ELEGIVEIS: Epson F6200, F6070, F6370 (SOMENTE ESTES).
-Se o cliente tiver outro modelo (ex: SC-series, F9xxx, F7xxx),
-NAO prometa conversao -- informe que precisa confirmar viabilidade
-com a equipe tecnica antes de qualquer promessa.
+MODELOS ELEGIVEIS E CUSTO DE CONVERSAO (SOMENTE ESTES MODELOS):
+- F6200 / F6070 / F6370: conversao remove o chip definitivamente.
+  Custo: R$1.700,00 + placa fornecida pelo cliente.
+  Alternativa mais barata para este trio: CHIP AVULSO R$35,00/unidade
+  (nao remove a trava -- pode precisar trocar chip a cada recarga).
+- F9470: conversao remove o chip definitivamente.
+  Custo: R$2.800,00 + placa fornecida pelo cliente.
+- F9470-H: conversao mantem uso de chip (nao remove a trava).
+  Custo: R$1.900,00 + placa fornecida pelo cliente.
+Em todos os casos a placa e fornecida PELO CLIENTE -- deixe isso claro
+antes de fechar, para nao gerar expectativa de placa inclusa.
+Se o cliente tiver outro modelo fora desta lista, NAO prometa
+conversao -- confirme viabilidade com a equipe tecnica antes.
 
-DUAS OPCOES DE CONVERSAO (apresente as duas, deixe o cliente escolher):
-1. CHIP AVULSO (desbloqueio simples): R$35,00 por unidade de chip.
-   Nao remove a trava de fabrica permanentemente -- pode precisar
-   trocar chip a cada recarga, dependendo do sistema da maquina.
-2. CONVERSAO DE PLACA (definitiva): R$1.700,00. Remove a necessidade
-   de chip para sempre -- maquina passa a aceitar tinta compativel
-   sem bloqueio.
+RENDIMENTO DE TINTA (IGUAL PARA EPSON E DGTEX): 10ml por m² impresso
+(0,01 L/m²). Use isso para calcular custo por m² e ROI quando o
+cliente informar area ou volume de producao. NUNCA use outro
+rendimento sem confirmar.
 
-TINTA COMPATIVEL RECOMENDADA (DGtex Premium -- linha padrao Doss,
-usada para todos os segmentos):
-- 1 Litro: R$180,00/L
-- Galao 5L: R$725,00 = R$145,00/L efetivo (mais barato que comprar em litro)
-Sempre confirme o preco vigente na planilha antes de fechar -- pode mudar.
-Use o galao como argumento se o cliente tiver volume de consumo alto:
-economiza R$35,00/L em relacao ao litro fechado.
+FORMULA DE CALCULO (use SEMPRE que o cliente der area/mes ou
+metros lineares/mes -- nunca invente valor de economia sem os dados
+do cliente):
+  custo_m2_epson  = preco_epson_R$/L * 0,01
+  custo_m2_dgtex  = preco_dgtex_R$/L * 0,01
+  economia_m2     = custo_m2_epson - custo_m2_dgtex
+  area_mensal_m2  = largura_m * metros_lineares_mes
+  economia_mensal = economia_m2 * area_mensal_m2
+  payback_meses   = custo_conversao / economia_mensal
+Peca ao cliente: preco atual da tinta Epson original (R$/L), largura
+de impressao (m) e metros lineares impressos/mes. Sem esses 3 dados
+NAO calcule economia -- so pergunte.
+
+TINTA COMPATIVEL -- ABERTURA E REGRA DE OFERTA:
+Linhas disponiveis: DGtex Lite 1L, DGtex Premium 1L, DGtex Premium
+Galao 5L. SEMPRE abra oferecendo as versoes de 1 LITRO (Lite ou
+Premium) -- forcar essas duas como padrao de entrada.
+- DGtex Lite 1L: R$127,50/L (cores com tonalidade mais baixa, usada
+  em moda, bandeiras, windbanner; se cliente exige cor mais fiel,
+  usar so o preto da Lite e as demais na Premium)
+- DGtex Premium 1L: R$180,00/L (linha padrao Doss, usada em todos
+  os segmentos, cor mais fiel)
+- DGtex Premium Galao 5L: R$725,00 = R$145,00/L efetivo -- OFERECER
+  APENAS se o cliente consumir 50L/mes ou mais. Abaixo disso, nao
+  empurre o galao -- fica capital parado sem necessidade.
+Sempre confirme o preco vigente na planilha antes de fechar.
 
 COMO ABORDAR:
-1. Confirme o modelo exato da Epson (precisa ser F6200, F6070 ou F6370)
-2. Pergunte o volume de impressao mensal do cliente
-3. Apresente as duas opcoes de conversao (chip R$35 vs placa R$1.700)
-   explicando a diferenca: chip e mais barato mas pode exigir troca
-   recorrente; placa e investimento maior mas resolve definitivo
-4. Recomende DGtex Premium como linha de tinta, mencione opcao de
-   galao para quem tem volume alto
+1. Confirme o modelo exato da Epson (precisa estar na lista acima)
+2. Pergunte volume de consumo mensal de tinta (litros/mes) para
+   decidir entre 1L (padrao) ou galao 5L (so se >=50L/mes)
+3. Para calcular economia: peca preco da tinta Epson original (R$/L),
+   largura de impressao e metros lineares/mes -- aplique a formula
+4. Apresente o custo de conversao do modelo especifico do cliente
+   (ver tabela acima) e o payback usando a formula
 5. NUNCA invente prazo de instalacao ou disponibilidade de tecnico --
    confirme com a equipe tecnica
+6. Deixe claro que a placa e responsabilidade do cliente
 
 SCRIPT SUGERIDO:
-"Voce veio pela campanha certa! Pra conversao da Epson a gente atende
-os modelos F6200, F6070 e F6370. Tem duas formas de fazer: o chip
-avulso por R$35 a unidade (mais simples, mas pode precisar trocar
-com frequencia) ou a conversao de placa por R$1.700 (resolve de vez,
-sem precisar de chip nunca mais). Qual e o seu modelo exato e quanto
-voce imprime por mes? Assim te indico a melhor opcao e a tinta certa
-pra sua producao."
+"Voce veio pela campanha certa! Pra conversao a gente atende os
+modelos F6200, F6070, F6370, F9470 e F9470-H, cada um com um custo
+especifico de conversao, e a placa fica por conta do cliente. Qual e
+o seu modelo exato? E me passa tambem o preco da sua tinta Epson
+atual, a largura de impressao e quantos metros voce imprime por mes
+-- assim calculo sua economia real com a DGtex."
 
-PERGUNTA CHAVE: modelo exato + volume mensal -- sem isso nao
-recomende opcao de conversao.
+PERGUNTA CHAVE: modelo exato + (preco Epson/L + largura + metros/mes
+para ROI, OU litros/mes para decidir linha de tinta) -- sem isso nao
+feche recomendacao.
 """,
     },
+
 
     "_padrao": {
         "nome":    "Atendimento Padrão",
