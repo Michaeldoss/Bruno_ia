@@ -226,6 +226,67 @@ nossa equipe. Voce ja usa sublimatica hoje ou vai comecar agora?"
 """,
     },
 
+    # ── CAMPANHA — Conversão Epson F6200/F6070/F6370 ─────────────────────────
+    "conversao_epson": {
+        "nome":    "Conversão Epson para Compatível",
+        "produto": "Chip/Conversão de placa Epson F6200/F6070/F6370 + Tinta DGtex Premium",
+        "origem":  "Trafego Pago- WhatsApp",
+        "vigencia": None,
+        "ativa":   True,
+        "condicoes": "Chip avulso a vista R$35,00/unidade ou conversao de placa R$1.700,00",
+        "brinde":    "",
+        "desconto":  "",
+        "contexto": """
+[CAMPANHA ATIVA: CONVERSAO EPSON PARA COMPATIVEL]
+O cliente veio do anuncio de conversao de impressora Epson para usar
+tinta compativel (nao gera desconto, e servico de conversao + venda
+de tinta compativel).
+
+MODELOS ELEGIVEIS: Epson F6200, F6070, F6370 (SOMENTE ESTES).
+Se o cliente tiver outro modelo (ex: SC-series, F9xxx, F7xxx),
+NAO prometa conversao -- informe que precisa confirmar viabilidade
+com a equipe tecnica antes de qualquer promessa.
+
+DUAS OPCOES DE CONVERSAO (apresente as duas, deixe o cliente escolher):
+1. CHIP AVULSO (desbloqueio simples): R$35,00 por unidade de chip.
+   Nao remove a trava de fabrica permanentemente -- pode precisar
+   trocar chip a cada recarga, dependendo do sistema da maquina.
+2. CONVERSAO DE PLACA (definitiva): R$1.700,00. Remove a necessidade
+   de chip para sempre -- maquina passa a aceitar tinta compativel
+   sem bloqueio.
+
+TINTA COMPATIVEL RECOMENDADA:
+- DGtex Premium 5L (Black/Cyan/Magenta/Yellow): R$725,00 -- confirme
+  preco vigente na planilha antes de fechar, pois pode mudar.
+- Diferencial do galao: custo por litro fica mais baixo comprando em
+  galao do que comprando em litro fechado -- use como argumento se o
+  cliente tiver volume de consumo alto.
+
+COMO ABORDAR:
+1. Confirme o modelo exato da Epson (precisa ser F6200, F6070 ou F6370)
+2. Pergunte o volume de impressao mensal do cliente
+3. Apresente as duas opcoes de conversao (chip R$35 vs placa R$1.700)
+   explicando a diferenca: chip e mais barato mas pode exigir troca
+   recorrente; placa e investimento maior mas resolve definitivo
+4. Recomende DGtex Premium como linha de tinta, mencione opcao de
+   galao para quem tem volume alto
+5. NUNCA invente prazo de instalacao ou disponibilidade de tecnico --
+   confirme com a equipe tecnica
+
+SCRIPT SUGERIDO:
+"Voce veio pela campanha certa! Pra conversao da Epson a gente atende
+os modelos F6200, F6070 e F6370. Tem duas formas de fazer: o chip
+avulso por R$35 a unidade (mais simples, mas pode precisar trocar
+com frequencia) ou a conversao de placa por R$1.700 (resolve de vez,
+sem precisar de chip nunca mais). Qual e o seu modelo exato e quanto
+voce imprime por mes? Assim te indico a melhor opcao e a tinta certa
+pra sua producao."
+
+PERGUNTA CHAVE: modelo exato + volume mensal -- sem isso nao
+recomende opcao de conversao.
+""",
+    },
+
     "_padrao": {
         "nome":    "Atendimento Padrão",
         "produto": "",
@@ -264,6 +325,8 @@ def detectar_campanha(primeira_mensagem: str) -> dict:
         "40% off na tinta sublimatica dgtex": "dgtex40off",
         "anuncio de 40% off": "dgtex40off",
         "40 off na tinta": "dgtex40off",
+        "tenho interesse em converter minha epson": "conversao_epson",
+        "converter minha epson": "conversao_epson",
     }
 
     # Verifica gatilhos de frase primeiro
