@@ -117,13 +117,17 @@ async def _get_or_create_conversation(client: httpx.AsyncClient, phone: str, con
         },
     )
     if r.status_code >= 300:
-        # Provavel 409: indice unico "so 1 conversa aberta por telefone
-        # na org" -- se o cliente ja tem uma conversa aberta em outro
-        # numero (ex: ja escalado pra um agente humano antes), acha
-        # essa e usa, em vez de tentar criar duplicata.
+        # FIX: agora que o indice unico no banco tambem considera a
+        # instancia (whatsapp_phone + org_id + whatsapp_instance), um
+        # 409 aqui so acontece por corrida real (dois webhooks quase
+        # simultaneos pro Bruno) -- nao mais porque outro agente ja
+        # tinha conversa aberta com esse telefone. Por isso o fallback
+        # agora TAMBEM filtra por instancia, senao volta a roubar a
+        # conversa de outro agente (foi o que causou a saudacao do
+        # Bruno aparecer como se fosse do Michael/Assistencia).
         r2 = await client.get(
             f"{SUPABASE_URL}/rest/v1/conversations",
-            params={"whatsapp_phone": f"eq.{phone}", "org_id": f"eq.{ORG_ID}", "status": "eq.open", "select": "id,unread_count", "limit": 1},
+            params={"whatsapp_phone": f"eq.{phone}", "org_id": f"eq.{ORG_ID}", "whatsapp_instance": f"eq.{WHATSAPP_INSTANCE}", "status": "eq.open", "select": "id,unread_count", "limit": 1},
             headers=_headers(),
         )
         rows2 = r2.json() if r2.status_code == 200 else []
