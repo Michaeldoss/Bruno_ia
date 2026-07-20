@@ -255,12 +255,13 @@ DUAS OPCOES DE CONVERSAO (apresente as duas, deixe o cliente escolher):
    de chip para sempre -- maquina passa a aceitar tinta compativel
    sem bloqueio.
 
-TINTA COMPATIVEL RECOMENDADA:
-- DGtex Premium 5L (Black/Cyan/Magenta/Yellow): R$725,00 -- confirme
-  preco vigente na planilha antes de fechar, pois pode mudar.
-- Diferencial do galao: custo por litro fica mais baixo comprando em
-  galao do que comprando em litro fechado -- use como argumento se o
-  cliente tiver volume de consumo alto.
+TINTA COMPATIVEL RECOMENDADA (DGtex Premium -- linha padrao Doss,
+usada para todos os segmentos):
+- 1 Litro: R$180,00/L
+- Galao 5L: R$725,00 = R$145,00/L efetivo (mais barato que comprar em litro)
+Sempre confirme o preco vigente na planilha antes de fechar -- pode mudar.
+Use o galao como argumento se o cliente tiver volume de consumo alto:
+economiza R$35,00/L em relacao ao litro fechado.
 
 COMO ABORDAR:
 1. Confirme o modelo exato da Epson (precisa ser F6200, F6070 ou F6370)
