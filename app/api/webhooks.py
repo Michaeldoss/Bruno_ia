@@ -7,6 +7,7 @@ from app.services.buffer_service import message_buffer
 from app.core.media_catalog import find_media_key_for_message, MEDIA_CATALOG
 from app.services.followup_service import resetar_followup
 from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
+from app.services.crm_inbox_client import log_message as log_message_to_crm
 from app.models.database import SessionLocal, Lead, MediaSent, Conversation
 import logging
 import asyncio
@@ -125,6 +126,11 @@ async def handle_async_response(
             logger.warning(f"[WEBHOOK] Mensagem vazia para {phone}. Abortando.")
             return
 
+        # Espelha a mensagem do cliente pro Inbox do CRM em tempo real.
+        # asyncio.create_task (nao await direto) pra nao atrasar a
+        # resposta do Bruno esperando o CRM responder.
+        asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
+
         logger.info(f"[WEBHOOK] Consultando IA para {phone}...")
         response_chunks = await process_message_with_assistant(thread_id, user_message)
         logger.info(f"[WEBHOOK] IA retornou {len(response_chunks)} chunks para {phone}.")
@@ -136,6 +142,7 @@ async def handle_async_response(
             delay = get_typing_delay(chunk)
             await asyncio.sleep(delay)
             await twilio_service.send_whatsapp_message(phone, chunk)
+            asyncio.create_task(log_message_to_crm(phone, chunk, is_from_contact=False))
             first_message = False
 
         # ── Envio de mídia — suporte a múltiplos produtos ─────────────────
@@ -171,10 +178,12 @@ async def handle_async_response(
 
                         if media.get("image"):
                             await twilio_service.send_whatsapp_message(phone, media_url=media["image"])
+                            asyncio.create_task(log_message_to_crm(phone, f"[imagem] {product_key}", is_from_contact=False, msg_type="image", media_url=media["image"]))
                             await asyncio.sleep(2.0)
 
                         if media.get("video"):
                             await twilio_service.send_whatsapp_message(phone, media_url=media["video"])
+                            asyncio.create_task(log_message_to_crm(phone, f"[video] {product_key}", is_from_contact=False, msg_type="video", media_url=media["video"]))
                             await asyncio.sleep(2.0)
 
                         db_media.add(MediaSent(phone=phone, product_key=product_key))
