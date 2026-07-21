@@ -1,4 +1,4 @@
-import requests
+import httpx
 import logging
 from typing import Optional
 from app.config import get_settings
@@ -75,16 +75,21 @@ async def escalate_to_human(
         "serasa_fatores": serasa_fatores,
     }
 
+    # FIX: era requests.post (SINCRONO/bloqueante) chamado dentro de uma
+    # funcao async -- travava o event loop inteiro do Bruno por ate 10s
+    # (o timeout) toda vez que um lead fechava, congelando TODAS as outras
+    # conversas simultaneas nesse intervalo. Agora usa httpx.AsyncClient,
+    # que e async de verdade e nao bloqueia o loop.
     try:
-        r = requests.post(
-            DOSS_CRM_URL,
-            json=payload,
-            headers={
-                "Content-Type": "application/json",
-                "x-bruno-key": DOSS_CRM_KEY,
-            },
-            timeout=10,
-        )
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                DOSS_CRM_URL,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-bruno-key": DOSS_CRM_KEY,
+                },
+            )
         if r.status_code == 200:
             data = r.json()
             logger.info(
