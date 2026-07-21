@@ -208,9 +208,21 @@ REGRAS DO DIAGNÓSTICO:
 
 REGRAS DE COLETA DE DADOS:
 - Se cliente mandou e-mail, NUNCA peça e-mail de novo
-- Se cliente mandou telefone, NUNCA peça telefone de novo
+- Se cliente mandou telefone, NUNCA peça telefone de novo (o telefone do WhatsApp ja conta como telefone -- nunca peca)
 - Se cliente mandou CNPJ, NUNCA peça CNPJ de novo
 - NUNCA peça e-mail e telefone separados — sempre juntos: "Qual seu e-mail e telefone?"
+- Peça e-mail no MAXIMO 1 vez por conversa inteira. Se o cliente ignorar e mudar de assunto,
+  siga o assunto novo -- NAO insista de novo no e-mail na proxima mensagem. So peça de novo
+  se o proprio cliente sinalizar que quer fechar/receber proposta.
+
+REGRA — QUANDO NÃO TEM A INFORMAÇÃO (preço, estoque, dado técnico):
+NÃO pule direto para pedir e-mail/dados quando faltar uma informação. Ordem correta:
+1. Diga que não tem esse dado agora, sem inventar número.
+2. Continue a conversa: pergunte o que falta pra te ajudar (produto exato, equipamento,
+   volume, cor) ou responda outras dúvidas técnicas que você já sabe.
+3. Só peça e-mail quando o cliente já decidiu o que quer e o próximo passo real é a proposta
+   comercial -- pedir dado de contato não é a resposta padrão para "não sei".
+Pedir e-mail como reação automática a "não tenho essa informação" é PROIBIDO.
 
 ────────────────────────────────────────────────────────────────
 
@@ -525,10 +537,21 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
 
         lead_state = db.query(LeadState).filter(LeadState.phone == phone).first()
         if not lead_state:
-            lead_state = LeadState(phone=phone, stage="active")
+            # FIX: lead_state.telefone comecava vazio e so era preenchido se
+            # o cliente digitasse um numero na conversa -- ignorando que
+            # 'phone' (o numero do WhatsApp de onde a mensagem chegou) ja
+            # e o telefone de contato de verdade. Resultado: Bruno pedia
+            # telefone pro cliente mesmo already estando na conversa com
+            # ele. Agora usa o proprio numero do WhatsApp como telefone
+            # padrao -- so pede de novo se um dia isso vier vazio por algum
+            # motivo (nao deveria acontecer, mas evita quebrar o fluxo).
+            lead_state = LeadState(phone=phone, stage="active", telefone=phone)
             db.add(lead_state)
             db.commit()
             db.refresh(lead_state)
+        elif not lead_state.telefone:
+            lead_state.telefone = phone
+            db.commit()
 
         historico_count = db.query(Conversation).filter(
             Conversation.phone == phone, Conversation.role == "user"
@@ -1192,6 +1215,17 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     + "\n".join(historico_lines[-14:])
                 )
 
+                # FIX: era asyncio.create_task(_criar_card()) -- disparava a
+                # tarefa e seguia em frente sem esperar. O 'finally: db.close()'
+                # la embaixo fechava a sessao do banco antes da tarefa em
+                # segundo plano rodar de verdade, e ela quebrava com
+                # DetachedInstanceError ao tentar ler lead_state.cnpj --
+                # ANTES de sequer montar a chamada pro Doss CRM. Resultado:
+                # zero leads criados, erro silencioso (ninguem via, so
+                # aparecia como "Task exception was never retrieved" no log).
+                # Agora usa 'await' de verdade: roda enquanto a sessao ainda
+                # esta aberta, e qualquer falha real cai no except la embaixo
+                # (que ja loga e avisa o cliente) em vez de sumir sem rastro.
                 async def _criar_card():
                     ok = await arcca_client(
                         phone, nome_lead, resumo,
@@ -1209,7 +1243,9 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     )
                     if ok:
                         logger.info(f"[ARCCA] Card criado para {phone}")
-                asyncio.create_task(_criar_card())
+                    else:
+                        logger.error(f"[ARCCA] FALHA ao criar card para {phone} -- lead perdido, verificar Doss CRM")
+                await _criar_card()
 
             lead_state.stage = "closed"
             db.commit()
