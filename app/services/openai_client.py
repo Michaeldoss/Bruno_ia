@@ -1243,6 +1243,7 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                     )
                     if ok:
                         logger.info(f"[ARCCA] Card criado para {phone}")
+                        lead_state.card_id = 1
                     else:
                         logger.error(f"[ARCCA] FALHA ao criar card para {phone} -- lead perdido, verificar Doss CRM")
                 await _criar_card()
@@ -1250,6 +1251,52 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
             lead_state.stage = "closed"
             db.commit()
             logger.info(f"[FLUXO] Conversa encerrada para {phone}")
+
+        # ── Handoff fraco: Bruno sinaliza que vai verificar algo (equipe
+        # tecnica, disponibilidade, etc) mas NAO se despediu -- a conversa
+        # continua. Sem isso o lead sumia se o cliente nao voltasse depois:
+        # nenhum card nascia, nada ficava registrado alem do espelho bruto
+        # no Inbox (que ninguem monitora ativamente). Cria RETIDO, sem dono
+        # (finalizado=False) -- so pra nao perder o lead, o vendedor de
+        # verdade so entra no gatilho forte (despedida) la em cima.
+        elif (
+            not despedida_detectada
+            and lead_state.stage not in ("closed",)
+            and not lead_state.card_id
+            and any(kw in reply_lower for kw in [
+                "vou acionar", "preciso acionar", "vou verificar com nossa equipe",
+                "vou verificar com a equipe", "vou consultar nossa equipe",
+                "equipe tecnica para verificar", "vou chamar um tecnico",
+                "vou chamar nosso tecnico", "vou passar pro tecnico",
+                "vou passar para o tecnico", "vou confirmar com o tecnico",
+                "acionar nossa equipe tecnica", "verificar a viabilidade",
+            ])
+        ):
+            nome_soft = lead.name if (lead.name and lead.name != phone and len(lead.name) > 2) else phone
+            cidade_soft = lead.city or ""
+            historico_soft = []
+            for msg in messages[-10:]:
+                txt = str(msg.get("content", "")).strip()
+                if txt and not txt.startswith(("[SISTEMA", "[FOLLOWUP", "Regime:", "Score:", "CNPJ Ativo:", "Negativos:", "INSTRUCAO:")):
+                    historico_soft.append(f"{'Cliente' if msg.get('role') == 'user' else 'Bruno'}: {txt[:250]}")
+            resumo_soft = (
+                "=== LEAD EM QUALIFICACAO (Bruno ainda conversando) ===\n\n"
+                f"Cliente:  {nome_soft}\nWhatsApp: {phone}\nCidade:   {cidade_soft or 'nao informada'}\n\n"
+                "Bruno sinalizou que vai verificar algo (equipe tecnica / disponibilidade) "
+                "antes de fechar. Card criado cedo pra nao perder o lead caso a conversa "
+                "esfrie antes do fechamento.\n\n"
+                "── CONVERSA (ultimas mensagens) ──\n" + "\n".join(historico_soft)
+            )
+            ok_soft = await arcca_client(
+                phone, nome_soft, resumo_soft,
+                cidade=cidade_soft, origem="Bruno IA", finalizado=False,
+            )
+            if ok_soft:
+                logger.info(f"[ARCCA] Card retido (handoff fraco) criado para {phone}")
+                lead_state.card_id = 1
+                db.commit()
+            else:
+                logger.error(f"[ARCCA] FALHA ao criar card retido para {phone}")
 
         elif lead_state.stage == "active":
             if any(kw in reply_lower for kw in [

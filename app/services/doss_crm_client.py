@@ -37,6 +37,7 @@ async def escalate_to_human(
     serasa_nivel: Optional[str] = None,
     serasa_recomendacao: Optional[str] = None,
     serasa_fatores: Optional[str] = None,
+    finalizado: bool = True,
 ) -> bool:
     """
     Envia o lead pro Doss CRM quando Bruno encerra a conversa.
@@ -73,12 +74,11 @@ async def escalate_to_human(
         "serasa_nivel": serasa_nivel,
         "serasa_recomendacao": serasa_recomendacao,
         "serasa_fatores": serasa_fatores,
-        # FIX: sem isso, o CRM (api/leads/create.js) nunca atribuia vendedor
-        # via rodizio -- todo lead nascia retido em "Bruno IA - Qualificando"
-        # sem dono, sem notificar ninguem. escalate_to_human so e chamado no
-        # fechamento da conversa (ver openai_client.py, bloco despedida_detectada),
-        # entao esse campo e sempre True aqui.
-        "finalizado": True,
+        # finalizado=True (fechamento real, despedida) -> CRM atribui vendedor
+        # via rodizio e notifica. finalizado=False (handoff fraco, tipo "vou
+        # verificar com a equipe tecnica") -> card nasce retido, sem dono, so
+        # pra nao perder o lead se a conversa esfriar. Ver openai_client.py.
+        "finalizado": finalizado,
     }
 
     # FIX: era requests.post (SINCRONO/bloqueante) chamado dentro de uma
