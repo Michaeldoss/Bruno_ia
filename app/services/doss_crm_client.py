@@ -38,6 +38,7 @@ async def escalate_to_human(
     serasa_recomendacao: Optional[str] = None,
     serasa_fatores: Optional[str] = None,
     finalizado: bool = True,
+    email: Optional[str] = None,
 ) -> bool:
     """
     Envia o lead pro Doss CRM quando Bruno encerra a conversa.
@@ -79,6 +80,10 @@ async def escalate_to_human(
         # verificar com a equipe tecnica") -> card nasce retido, sem dono, so
         # pra nao perder o lead se a conversa esfriar. Ver openai_client.py.
         "finalizado": finalizado,
+        # E-mail que o Bruno ja capturava no lead_state.email mas nunca
+        # chegava estruturado no CRM -- so ficava dentro do texto solto
+        # do resumo. Agora vira coluna de verdade em contacts.email.
+        "email": email or None,
     }
 
     # FIX: era requests.post (SINCRONO/bloqueante) chamado dentro de uma

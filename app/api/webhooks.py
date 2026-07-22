@@ -8,7 +8,7 @@ from app.core.media_catalog import find_media_key_for_message, MEDIA_CATALOG
 from app.services.followup_service import resetar_followup
 from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
 from app.services.crm_inbox_client import log_message as log_message_to_crm
-from app.models.database import SessionLocal, Lead, MediaSent, Conversation
+from app.models.database import SessionLocal, Lead, MediaSent, Conversation, LeadState
 import logging
 import asyncio
 import re
@@ -103,6 +103,25 @@ async def handle_async_response(
     print(f"\n>>> INICIANDO PROCESSAMENTO PARA: {phone}")
     db = SessionLocal()
     try:
+        # ── Trava de handoff ────────────────────────────────────────────
+        # Uma vez que o lead foi entregue (pipeline ou vendedor -- stage
+        # "closed", setado no fechamento forte em openai_client.py), o
+        # Bruno NUNCA MAIS fala com esse numero: nao responde, nao manda
+        # midia, nao reabre followup. A partir daqui quem atende e humano,
+        # pelo numero do agente -- o Bruno so continua espelhando a
+        # mensagem recebida pro Inbox do CRM (pra o agente ver o que o
+        # cliente mandou), e para por ai.
+        lead_state = db.query(LeadState).filter(LeadState.phone == phone).first()
+        if lead_state and lead_state.stage == "closed":
+            logger.info(f"[HANDOFF] Lead de {phone} ja foi entregue -- Bruno nao responde mais. So espelhando pro CRM.")
+            if user_message:
+                asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
+            elif audio_url and content_type and "audio" in content_type:
+                transcription = await transcribe_audio(audio_url)
+                if transcription:
+                    asyncio.create_task(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
+            return
+
         lead = db.query(Lead).filter(Lead.phone == phone).first()
         if not lead:
             thread_id = await create_thread()

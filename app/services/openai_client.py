@@ -1240,6 +1240,7 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         serasa_nivel=serasa_nivel,
                         serasa_recomendacao=serasa_recomendacao,
                         serasa_fatores=serasa_fatores,
+                        email=lead_state.email or None,
                     )
                     if ok:
                         logger.info(f"[ARCCA] Card criado para {phone}")
@@ -1290,6 +1291,7 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
             ok_soft = await arcca_client(
                 phone, nome_soft, resumo_soft,
                 cidade=cidade_soft, origem="Bruno IA", finalizado=False,
+                email=lead_state.email or None,
             )
             if ok_soft:
                 logger.info(f"[ARCCA] Card retido (handoff fraco) criado para {phone}")
