@@ -24,7 +24,7 @@ notar problema aqui.
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import httpx
@@ -138,6 +138,93 @@ async def _get_or_create_conversation(client: httpx.AsyncClient, phone: str, con
     data = r.json()
     conv_id = (data[0]["id"] if isinstance(data, list) else data.get("id")) if data else None
     return conv_id, 0
+
+
+async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
+    """Verifica se um AGENTE HUMANO (nao o Bruno) respondeu esse telefone
+    recentemente em alguma conversa do CRM (qualquer whatsapp_instance,
+    exceto 'bruno-ia').
+
+    Existia so a trava de handoff FORTE (lead_state.stage == "closed"),
+    setada pelo proprio Bruno quando ELE decide encerrar. Isso nao cobre
+    o caso de um vendedor ou o Michael assumirem a conversa manualmente
+    pelo CRM/WhatsApp direto -- o Bruno nao tinha como saber disso e
+    continuava respondendo por cima (foi o que aconteceu com a Jucania:
+    o Bruno tinha feito "handoff fraco" -- so retem o lead sem fechar --
+    entao na proxima mensagem dela ele voltou a falar, inclusive se
+    apresentando como "Michael", por cima do David que ja estava
+    atendendo).
+
+    Retorna True se achar mensagem is_from_contact=false, de uma
+    conversa que NAO e do Bruno, dentro da janela -- ou seja, um humano
+    respondeu de verdade recentemente. Falha aberta (retorna False, ou
+    seja "pode responder") em qualquer erro de rede/API pra nao travar
+    o atendimento por causa de uma instabilidade do CRM.
+    """
+    if not SUPABASE_KEY or SUPABASE_KEY == "stub":
+        return False
+
+    phone_clean = _normalize_phone(phone)
+    if not phone_clean:
+        return False
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
+
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            # Todas as conversas desse telefone, qualquer instancia --
+            # o numero do Bruno (Twilio) e o MESMO canal usado quando um
+            # humano responde manualmente pelo Inbox do CRM, entao nao da
+            # pra filtrar por whatsapp_instance nem confiar no agent_id
+            # da conversa (e um campo mutavel em nivel de conversa, nao
+            # de mensagem, e pode ficar "contaminado" -- ex: uma conversa
+            # criada pelo Bruno que depois teve o agent_id corrigido).
+            #
+            # O sinal confiavel e por MENSAGEM: sender_id so vem
+            # preenchido quando um humano loga no CRM e manda a mensagem
+            # por la (fica com o profile id de quem mandou). As mensagens
+            # que o proprio Bruno espelha (log_message, acima) NUNCA
+            # setam sender_id -- ficam sempre null. Entao "existe mensagem
+            # is_from_contact=false com sender_id preenchido, recente" =
+            # humano respondeu de verdade, nao interessa a instancia.
+            r = await client.get(
+                f"{SUPABASE_URL}/rest/v1/conversations",
+                params={
+                    "whatsapp_phone": f"eq.{phone_clean}",
+                    "org_id": f"eq.{ORG_ID}",
+                    "select": "id",
+                },
+                headers=_headers(),
+            )
+            if r.status_code != 200:
+                return False
+            conv_ids = [row["id"] for row in r.json()] if isinstance(r.json(), list) else []
+            if not conv_ids:
+                return False
+
+            ids_filter = "(" + ",".join(conv_ids) + ")"
+            r2 = await client.get(
+                f"{SUPABASE_URL}/rest/v1/messages",
+                params={
+                    "conversation_id": f"in.{ids_filter}",
+                    "is_from_contact": "eq.false",
+                    "sender_id": "not.is.null",
+                    "created_at": f"gte.{cutoff}",
+                    "select": "id,created_at",
+                    "limit": 1,
+                },
+                headers=_headers(),
+            )
+            if r2.status_code != 200:
+                return False
+            rows = r2.json()
+            found = isinstance(rows, list) and len(rows) > 0
+            if found:
+                logger.info(f"[HANDOFF] Humano ativo recentemente pra {phone_clean} -- Bruno vai ficar quieto e so espelhar.")
+            return found
+    except Exception as e:
+        logger.error(f"[CRM Inbox] Falha ao checar humano ativo ({phone}): {e}")
+        return False
 
 
 async def log_message(

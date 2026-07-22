@@ -7,7 +7,7 @@ from app.services.buffer_service import message_buffer
 from app.core.media_catalog import find_media_key_for_message, MEDIA_CATALOG
 from app.services.followup_service import resetar_followup
 from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
-from app.services.crm_inbox_client import log_message as log_message_to_crm
+from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently
 from app.models.database import SessionLocal, Lead, MediaSent, Conversation, LeadState
 import logging
 import asyncio
@@ -114,6 +114,31 @@ async def handle_async_response(
         lead_state = db.query(LeadState).filter(LeadState.phone == phone).first()
         if lead_state and lead_state.stage == "closed":
             logger.info(f"[HANDOFF] Lead de {phone} ja foi entregue -- Bruno nao responde mais. So espelhando pro CRM.")
+            if user_message:
+                asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
+            elif audio_url and content_type and "audio" in content_type:
+                transcription = await transcribe_audio(audio_url)
+                if transcription:
+                    asyncio.create_task(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
+            return
+
+        # ── Trava de handoff (parte 2 -- humano assumiu na marra) ────────
+        # A trava acima (stage == "closed") so cobre quando o PROPRIO
+        # Bruno decidiu fechar (despedida forte). Ela nao cobre: (a)
+        # "handoff fraco" (Bruno so retem o lead, ex: "vou verificar com
+        # a equipe tecnica" -- stage continua active de proposito, pra
+        # nao perder o lead se ninguem mais aparecer) e (b) um vendedor
+        # ou o Michael assumirem manualmente pelo WhatsApp/CRM sem passar
+        # pelo Bruno. Em ambos os casos o Bruno nao tinha como saber e
+        # respondia por cima -- foi o que aconteceu com a Jucania: David
+        # ja estava atendendo, o Bruno voltou a falar (e ainda se
+        # apresentou como "Michael") na proxima mensagem dela.
+        #
+        # Fix: antes de chamar a IA, pergunta pro CRM se algum humano
+        # (qualquer instancia que nao seja 'bruno-ia') respondeu esse
+        # telefone nas ultimas 12h. Se sim, Bruno so espelha e sai --
+        # nao fala, nao manda midia, nao reabre nada.
+        if await human_active_recently(phone):
             if user_message:
                 asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
             elif audio_url and content_type and "audio" in content_type:
