@@ -10,6 +10,8 @@ from app.models.database import SessionLocal, Lead, Conversation, LeadState
 from app.services.uniplus_client import uniplus_service
 from app.services.sheets_client import sheets_service
 from app.services.doss_crm_client import arcca_client
+from app.services.twilio_client import twilio_service
+from app.services.crm_inbox_client import log_message as log_message_to_crm
 from app.services.serasa_client import (
     consultar_cnpj as serasa_consultar,
     format_serasa_summary, get_regime_serasa,
@@ -1227,7 +1229,7 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 # esta aberta, e qualquer falha real cai no except la embaixo
                 # (que ja loga e avisa o cliente) em vez de sumir sem rastro.
                 async def _criar_card():
-                    ok = await arcca_client(
+                    resultado = await arcca_client(
                         phone, nome_lead, resumo,
                         produto=produto_lead, cidade=cidade_lead, origem=origem_lead,
                         valor_estimado=valor_estimado, tecnologia=tecnologia_lead,
@@ -1242,9 +1244,27 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         serasa_fatores=serasa_fatores,
                         email=lead_state.email or None,
                     )
-                    if ok:
+                    if resultado.get("ok"):
                         logger.info(f"[ARCCA] Card criado para {phone}")
                         lead_state.card_id = 1
+
+                        # Avisa o cliente quem assume e por qual numero -- a
+                        # partir daqui e ESSE numero que ele deve chamar, nao
+                        # o do Bruno (que ja parou de responder, ver trava de
+                        # handoff em webhooks.py). So manda se o CRM devolveu
+                        # um vendedor de verdade (lead com dono, nao retido).
+                        agent_name = resultado.get("agent_name")
+                        agent_phone = resultado.get("agent_phone")
+                        if agent_name and agent_phone:
+                            numero_fmt = _formatar_telefone_br(agent_phone)
+                            aviso = (
+                                f"A partir de agora quem continua com você é o(a) {agent_name.split()[0]}, "
+                                f"pelo WhatsApp {numero_fmt}. Salva esse número aí -- é por ele que vai rolar "
+                                f"o resto do atendimento."
+                            )
+                            await asyncio.sleep(2.0)
+                            await twilio_service.send_whatsapp_message(phone, aviso)
+                            asyncio.create_task(log_message_to_crm(phone, aviso, is_from_contact=False))
                     else:
                         logger.error(f"[ARCCA] FALHA ao criar card para {phone} -- lead perdido, verificar Doss CRM")
                 await _criar_card()
@@ -1288,12 +1308,12 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 "esfrie antes do fechamento.\n\n"
                 "── CONVERSA (ultimas mensagens) ──\n" + "\n".join(historico_soft)
             )
-            ok_soft = await arcca_client(
+            resultado_soft = await arcca_client(
                 phone, nome_soft, resumo_soft,
                 cidade=cidade_soft, origem="Bruno IA", finalizado=False,
                 email=lead_state.email or None,
             )
-            if ok_soft:
+            if resultado_soft.get("ok"):
                 logger.info(f"[ARCCA] Card retido (handoff fraco) criado para {phone}")
                 lead_state.card_id = 1
                 db.commit()
@@ -1320,6 +1340,20 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
 
 
 import re as _re
+
+def _formatar_telefone_br(numero: str) -> str:
+    """Formata numero cru (ex: 554792307367) como (47) 99230-7367 pra
+    mandar num texto legivel pro cliente. Aceita 8 ou 9 digitos depois
+    do DDD (numeros antigos as vezes nao tem o 9 na frente)."""
+    digitos = "".join(c for c in (numero or "") if c.isdigit())
+    if digitos.startswith("55") and len(digitos) in (12, 13):
+        digitos = digitos[2:]
+    if len(digitos) == 11:
+        return f"({digitos[:2]}) {digitos[2:7]}-{digitos[7:]}"
+    if len(digitos) == 10:
+        return f"({digitos[:2]}) {digitos[2:6]}-{digitos[6:]}"
+    return numero or ""
+
 
 def _clean_cnpj(text: str) -> str:
     return _re.sub(r'[^0-9]', '', text)

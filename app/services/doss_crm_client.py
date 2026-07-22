@@ -108,14 +108,18 @@ async def escalate_to_human(
                 f"pipeline_lead_id={data.get('pipeline_lead_id')} "
                 f"agente={data.get('assigned_agent_id')}"
             )
-            return True
+            return {
+                "ok": True,
+                "agent_name": data.get("assigned_agent_name"),
+                "agent_phone": data.get("assigned_agent_phone"),
+            }
 
         logger.error(f"Doss CRM: falha ao criar lead - {r.status_code} | {r.text[:300]}")
-        return False
+        return {"ok": False, "agent_name": None, "agent_phone": None}
 
     except Exception as e:
         logger.error(f"Doss CRM escalate_to_human excecao: {e}")
-        return False
+        return {"ok": False, "agent_name": None, "agent_phone": None}
 
 
 # Alias para compatibilidade com openai_client.py (mesmo nome usado
