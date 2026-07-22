@@ -73,6 +73,12 @@ async def escalate_to_human(
         "serasa_nivel": serasa_nivel,
         "serasa_recomendacao": serasa_recomendacao,
         "serasa_fatores": serasa_fatores,
+        # FIX: sem isso, o CRM (api/leads/create.js) nunca atribuia vendedor
+        # via rodizio -- todo lead nascia retido em "Bruno IA - Qualificando"
+        # sem dono, sem notificar ninguem. escalate_to_human so e chamado no
+        # fechamento da conversa (ver openai_client.py, bloco despedida_detectada),
+        # entao esse campo e sempre True aqui.
+        "finalizado": True,
     }
 
     # FIX: era requests.post (SINCRONO/bloqueante) chamado dentro de uma
