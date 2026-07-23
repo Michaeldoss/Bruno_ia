@@ -12,7 +12,6 @@ class Settings(BaseSettings):
     OPENAI_ASSISTANT_ID: str = "stub"
     ANTHROPIC_API_KEY: str = "stub"
 
-    # Uniplus ERP Integration — credenciais obrigatoriamente via ambiente.
     UNIPLUS_ACCOUNT: str = "stub"
     UNIPLUS_ACCESS_KEY: str = "stub"
     UNIPLUS_AUTH_CODE: str = "stub"
@@ -24,7 +23,6 @@ class Settings(BaseSettings):
     UNIPLUS_OS_ENDPOINT: str = "/public-api/v1/ordem-servico"
     UNIPLUS_STATUS_FINALIZADA: str = "3"
 
-    # Supabase / Doss CRM
     SUPABASE_URL: str = "https://dojisexdgitoxluuawgc.supabase.co"
     SUPABASE_SERVICE_ROLE_KEY: str = "stub"
 
@@ -44,6 +42,12 @@ class Settings(BaseSettings):
     HTTP_RETRY_ATTEMPTS: int = 4
     HTTP_CONNECT_TIMEOUT_SECONDS: float = 6.0
     HTTP_TOTAL_TIMEOUT_SECONDS: float = 20.0
+
+    # Templates aprovados no Twilio/Meta para mensagens iniciadas fora da
+    # janela de 24h. Sem esses SIDs os steps 4 e 5 ficam suspensos, em vez
+    # de falharem silenciosamente com erro 63016.
+    FOLLOWUP_TEMPLATE_STEP_4: str = ""
+    FOLLOWUP_TEMPLATE_STEP_5: str = ""
 
     ENVIRONMENT: str = "development"
 
