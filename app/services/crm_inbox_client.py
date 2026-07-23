@@ -1,27 +1,6 @@
-"""
-Espelha as mensagens do Bruno (recebidas do cliente e enviadas pelo
-Bruno) pro Inbox do Doss CRM em tempo real.
+"""Espelha em tempo real as mensagens do Bruno no Inbox do Doss CRM."""
 
-Antes disso: o CRM so ficava sabendo de uma conversa do Bruno quando
-ele decidia ESCALAR pra um humano (ver doss_crm_client.escalate_to_human)
--- um "dump" de uma vez so, no final. Enquanto o Bruno ainda estava
-conversando, ninguem via nada no CRM.
-
-Agora: cada mensagem (nos dois sentidos) e espelhada na hora, numa
-conversa marcada com whatsapp_instance='bruno-ia' e atribuida ao
-perfil "Bruno IA" (criado na tela de Administracao do CRM, com
-role=agent) -- ele aparece no Inbox exatamente como um agente humano
-apareceria.
-
-Reaproveita a MESMA credencial (SUPABASE_SERVICE_ROLE_KEY) que ja
-existe no .env do Bruno pra Pesquisa de Satisfacao -- nao precisa de
-chave nova.
-
-Design deliberado: nunca derruba o fluxo de atendimento do Bruno se o
-espelhamento falhar. So loga o erro. O cliente no WhatsApp nunca deve
-notar problema aqui.
-"""
-
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone, timedelta
@@ -37,73 +16,103 @@ logger = logging.getLogger(__name__)
 SUPABASE_URL = settings.SUPABASE_URL.rstrip("/")
 SUPABASE_KEY = settings.SUPABASE_SERVICE_ROLE_KEY
 ORG_ID = "dafa7ea5-08c4-44dd-886e-d58905fca38c"
-
-# Perfil dedicado do Bruno no Doss CRM (Administracao > usuarios).
-# Se esse perfil for apagado e recriado, atualizar o id aqui.
 BRUNO_AGENT_ID = "31b8f1f2-b509-4319-abfb-989954b3ba25"
-
-# Mesma marca ja usada em doss_crm_client.escalate_to_human -- nao e
-# uma instancia Evolution de verdade, so identifica a origem.
 WHATSAPP_INSTANCE = "bruno-ia"
+_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
 
 
-def _headers() -> dict:
-    return {
+def _headers(prefer_representation: bool = True) -> dict:
+    headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json",
-        "Prefer": "return=representation",
     }
+    if prefer_representation:
+        headers["Prefer"] = "return=representation"
+    return headers
 
 
 def _normalize_phone(raw: str) -> str:
-    if not raw:
-        return ""
-    return re.sub(r"[^\d]", "", raw.replace("whatsapp:", ""))
+    digits = re.sub(r"[^\d]", "", str(raw or "").replace("whatsapp:", ""))
+    if not digits.startswith("55") and len(digits) in (10, 11):
+        digits = "55" + digits
+    return digits
+
+
+async def _request_with_retry(client: httpx.AsyncClient, method: str, url: str, attempts: int = 4, **kwargs) -> httpx.Response:
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            response = await client.request(method, url, **kwargs)
+            if response.status_code not in _RETRYABLE_STATUS:
+                return response
+            last_error = RuntimeError(f"HTTP {response.status_code}: {response.text[:300]}")
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            last_error = exc
+
+        logger.warning("[CRM Inbox] tentativa %s/%s falhou: %s", attempt, attempts, last_error)
+        if attempt < attempts:
+            await asyncio.sleep(min(6.0, 1.0 * (2 ** (attempt - 1))))
+    raise RuntimeError(f"Falha definitiva no CRM Inbox: {last_error}") from last_error
 
 
 async def _get_or_create_contact(client: httpx.AsyncClient, phone: str, nome: Optional[str]) -> Optional[str]:
-    r = await client.get(
+    response = await _request_with_retry(
+        client,
+        "GET",
         f"{SUPABASE_URL}/rest/v1/contacts",
         params={"phone": f"eq.{phone}", "org_id": f"eq.{ORG_ID}", "select": "id", "limit": 1},
         headers=_headers(),
     )
-    rows = r.json() if r.status_code == 200 else []
+    rows = response.json() if response.status_code == 200 else []
     if isinstance(rows, list) and rows:
         return rows[0]["id"]
 
-    r = await client.post(
+    response = await _request_with_retry(
+        client,
+        "POST",
         f"{SUPABASE_URL}/rest/v1/contacts",
         headers=_headers(),
         json={"org_id": ORG_ID, "name": nome or phone, "phone": phone, "origin": "Bruno IA"},
     )
-    if r.status_code >= 300:
-        logger.error(f"[CRM Inbox] Falha ao criar contato: {r.status_code} {r.text[:300]}")
+    if response.status_code >= 300:
+        # Corrida de criação: busca novamente antes de desistir.
+        retry = await _request_with_retry(
+            client,
+            "GET",
+            f"{SUPABASE_URL}/rest/v1/contacts",
+            params={"phone": f"eq.{phone}", "org_id": f"eq.{ORG_ID}", "select": "id", "limit": 1},
+            headers=_headers(),
+        )
+        retry_rows = retry.json() if retry.status_code == 200 else []
+        if isinstance(retry_rows, list) and retry_rows:
+            return retry_rows[0]["id"]
         return None
-    data = r.json()
+
+    data = response.json()
     return (data[0]["id"] if isinstance(data, list) else data.get("id")) if data else None
 
 
 async def _get_or_create_conversation(client: httpx.AsyncClient, phone: str, contact_id: str) -> tuple:
-    """Retorna (conversation_id, unread_count_atual)."""
-    r = await client.get(
-        f"{SUPABASE_URL}/rest/v1/conversations",
-        params={
-            "whatsapp_phone": f"eq.{phone}",
-            "org_id": f"eq.{ORG_ID}",
-            "whatsapp_instance": f"eq.{WHATSAPP_INSTANCE}",
-            "status": "eq.open",
-            "select": "id,unread_count",
-            "order": "created_at.desc",
-            "limit": 1,
-        },
-        headers=_headers(),
+    params = {
+        "whatsapp_phone": f"eq.{phone}",
+        "org_id": f"eq.{ORG_ID}",
+        "whatsapp_instance": f"eq.{WHATSAPP_INSTANCE}",
+        "status": "eq.open",
+        "select": "id,unread_count",
+        "order": "created_at.desc",
+        "limit": 1,
+    }
+    response = await _request_with_retry(
+        client, "GET", f"{SUPABASE_URL}/rest/v1/conversations", params=params, headers=_headers()
     )
-    rows = r.json() if r.status_code == 200 else []
+    rows = response.json() if response.status_code == 200 else []
     if isinstance(rows, list) and rows:
         return rows[0]["id"], rows[0].get("unread_count") or 0
 
-    r = await client.post(
+    response = await _request_with_retry(
+        client,
+        "POST",
         f"{SUPABASE_URL}/rest/v1/conversations",
         headers=_headers(),
         json={
@@ -116,51 +125,21 @@ async def _get_or_create_conversation(client: httpx.AsyncClient, phone: str, con
             "unread_count": 0,
         },
     )
-    if r.status_code >= 300:
-        # FIX: agora que o indice unico no banco tambem considera a
-        # instancia (whatsapp_phone + org_id + whatsapp_instance), um
-        # 409 aqui so acontece por corrida real (dois webhooks quase
-        # simultaneos pro Bruno) -- nao mais porque outro agente ja
-        # tinha conversa aberta com esse telefone. Por isso o fallback
-        # agora TAMBEM filtra por instancia, senao volta a roubar a
-        # conversa de outro agente (foi o que causou a saudacao do
-        # Bruno aparecer como se fosse do Michael/Assistencia).
-        r2 = await client.get(
-            f"{SUPABASE_URL}/rest/v1/conversations",
-            params={"whatsapp_phone": f"eq.{phone}", "org_id": f"eq.{ORG_ID}", "whatsapp_instance": f"eq.{WHATSAPP_INSTANCE}", "status": "eq.open", "select": "id,unread_count", "limit": 1},
-            headers=_headers(),
+    if response.status_code >= 300:
+        fallback = await _request_with_retry(
+            client, "GET", f"{SUPABASE_URL}/rest/v1/conversations", params=params, headers=_headers()
         )
-        rows2 = r2.json() if r2.status_code == 200 else []
-        if isinstance(rows2, list) and rows2:
-            return rows2[0]["id"], rows2[0].get("unread_count") or 0
-        logger.error(f"[CRM Inbox] Falha ao criar conversa: {r.status_code} {r.text[:300]}")
+        fallback_rows = fallback.json() if fallback.status_code == 200 else []
+        if isinstance(fallback_rows, list) and fallback_rows:
+            return fallback_rows[0]["id"], fallback_rows[0].get("unread_count") or 0
         return None, 0
-    data = r.json()
+
+    data = response.json()
     conv_id = (data[0]["id"] if isinstance(data, list) else data.get("id")) if data else None
     return conv_id, 0
 
 
 async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
-    """Verifica se um AGENTE HUMANO (nao o Bruno) respondeu esse telefone
-    recentemente em alguma conversa do CRM (qualquer whatsapp_instance,
-    exceto 'bruno-ia').
-
-    Existia so a trava de handoff FORTE (lead_state.stage == "closed"),
-    setada pelo proprio Bruno quando ELE decide encerrar. Isso nao cobre
-    o caso de um vendedor ou o Michael assumirem a conversa manualmente
-    pelo CRM/WhatsApp direto -- o Bruno nao tinha como saber disso e
-    continuava respondendo por cima (foi o que aconteceu com a Jucania:
-    o Bruno tinha feito "handoff fraco" -- so retem o lead sem fechar --
-    entao na proxima mensagem dela ele voltou a falar, inclusive se
-    apresentando como "Michael", por cima do David que ja estava
-    atendendo).
-
-    Retorna True se achar mensagem is_from_contact=false, de uma
-    conversa que NAO e do Bruno, dentro da janela -- ou seja, um humano
-    respondeu de verdade recentemente. Falha aberta (retorna False, ou
-    seja "pode responder") em qualquer erro de rede/API pra nao travar
-    o atendimento por causa de uma instabilidade do CRM.
-    """
     if not SUPABASE_KEY or SUPABASE_KEY == "stub":
         return False
 
@@ -169,25 +148,11 @@ async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
         return False
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
-
     try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            # Todas as conversas desse telefone, qualquer instancia --
-            # o numero do Bruno (Twilio) e o MESMO canal usado quando um
-            # humano responde manualmente pelo Inbox do CRM, entao nao da
-            # pra filtrar por whatsapp_instance nem confiar no agent_id
-            # da conversa (e um campo mutavel em nivel de conversa, nao
-            # de mensagem, e pode ficar "contaminado" -- ex: uma conversa
-            # criada pelo Bruno que depois teve o agent_id corrigido).
-            #
-            # O sinal confiavel e por MENSAGEM: sender_id so vem
-            # preenchido quando um humano loga no CRM e manda a mensagem
-            # por la (fica com o profile id de quem mandou). As mensagens
-            # que o proprio Bruno espelha (log_message, acima) NUNCA
-            # setam sender_id -- ficam sempre null. Entao "existe mensagem
-            # is_from_contact=false com sender_id preenchido, recente" =
-            # humano respondeu de verdade, nao interessa a instancia.
-            r = await client.get(
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=4.0)) as client:
+            response = await _request_with_retry(
+                client,
+                "GET",
                 f"{SUPABASE_URL}/rest/v1/conversations",
                 params={
                     "whatsapp_phone": f"eq.{phone_clean}",
@@ -195,18 +160,21 @@ async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
                     "select": "id",
                 },
                 headers=_headers(),
+                attempts=2,
             )
-            if r.status_code != 200:
+            if response.status_code != 200:
                 return False
-            conv_ids = [row["id"] for row in r.json()] if isinstance(r.json(), list) else []
+            payload = response.json()
+            conv_ids = [row["id"] for row in payload] if isinstance(payload, list) else []
             if not conv_ids:
                 return False
 
-            ids_filter = "(" + ",".join(conv_ids) + ")"
-            r2 = await client.get(
+            response = await _request_with_retry(
+                client,
+                "GET",
                 f"{SUPABASE_URL}/rest/v1/messages",
                 params={
-                    "conversation_id": f"in.{ids_filter}",
+                    "conversation_id": "in.(" + ",".join(conv_ids) + ")",
                     "is_from_contact": "eq.false",
                     "sender_id": "not.is.null",
                     "created_at": f"gte.{cutoff}",
@@ -214,16 +182,17 @@ async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
                     "limit": 1,
                 },
                 headers=_headers(),
+                attempts=2,
             )
-            if r2.status_code != 200:
-                return False
-            rows = r2.json()
-            found = isinstance(rows, list) and len(rows) > 0
+            rows = response.json() if response.status_code == 200 else []
+            found = isinstance(rows, list) and bool(rows)
             if found:
-                logger.info(f"[HANDOFF] Humano ativo recentemente pra {phone_clean} -- Bruno vai ficar quieto e so espelhar.")
+                logger.info("[HANDOFF] Humano ativo recentemente para %s", phone_clean)
             return found
-    except Exception as e:
-        logger.error(f"[CRM Inbox] Falha ao checar humano ativo ({phone}): {e}")
+    except Exception as exc:
+        # Falha aberta apenas nessa consulta: indisponibilidade do CRM não pode
+        # deixar todos os clientes sem resposta do Bruno.
+        logger.error("[CRM Inbox] Falha ao checar humano ativo (%s): %s", phone, exc)
         return False
 
 
@@ -235,29 +204,29 @@ async def log_message(
     msg_type: str = "text",
     media_url: Optional[str] = None,
     whatsapp_id: Optional[str] = None,
-) -> None:
-    """Espelha uma mensagem (do cliente ou do Bruno) pro Inbox do CRM.
-
-    Chamar isso NUNCA deve travar nem atrasar de forma perceptivel o
-    atendimento real via Twilio -- qualquer falha aqui so vira log.
-    """
+) -> bool:
+    """Espelha uma mensagem e retorna True apenas quando todas as escritas essenciais terminam."""
     if not SUPABASE_KEY or SUPABASE_KEY == "stub":
-        return
+        logger.warning("[CRM Inbox] SUPABASE_SERVICE_ROLE_KEY ausente; espelhamento ignorado")
+        return False
 
     phone_clean = _normalize_phone(phone)
     if not phone_clean or not content:
-        return
+        return False
 
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
             contact_id = await _get_or_create_contact(client, phone_clean, nome)
             if not contact_id:
-                return
+                raise RuntimeError("contato nao criado/localizado")
+
             conversation_id, current_unread = await _get_or_create_conversation(client, phone_clean, contact_id)
             if not conversation_id:
-                return
+                raise RuntimeError("conversa nao criada/localizada")
 
-            await client.post(
+            message_response = await _request_with_retry(
+                client,
+                "POST",
                 f"{SUPABASE_URL}/rest/v1/messages",
                 headers=_headers(),
                 json={
@@ -271,6 +240,8 @@ async def log_message(
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
+            if message_response.status_code >= 300 and message_response.status_code != 409:
+                raise RuntimeError(f"mensagem recusada: HTTP {message_response.status_code} {message_response.text[:300]}")
 
             patch_body = {
                 "last_message": content[:300],
@@ -279,13 +250,18 @@ async def log_message(
             if is_from_contact:
                 patch_body["unread_count"] = current_unread + 1
 
-            await client.patch(
+            patch_response = await _request_with_retry(
+                client,
+                "PATCH",
                 f"{SUPABASE_URL}/rest/v1/conversations",
                 params={"id": f"eq.{conversation_id}"},
-                headers=_headers(),
+                headers=_headers(prefer_representation=False),
                 json=patch_body,
             )
-    except Exception as e:
-        # De proposito: nunca propaga. Espelhamento no CRM e "nice to
-        # have", nao pode derrubar o atendimento real do cliente.
-        logger.error(f"[CRM Inbox] Falha ao espelhar mensagem ({phone}): {e}")
+            if patch_response.status_code >= 300:
+                raise RuntimeError(f"conversa nao atualizada: HTTP {patch_response.status_code}")
+            return True
+
+    except Exception as exc:
+        logger.error("[CRM Inbox] Falha ao espelhar mensagem (%s): %s", phone, exc, exc_info=True)
+        return False
