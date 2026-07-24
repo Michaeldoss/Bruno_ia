@@ -227,6 +227,137 @@ async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
         return False
 
 
+async def criar_lead_no_pipeline(
+    phone: str,
+    nome: Optional[str] = None,
+    cidade: Optional[str] = None,
+    email: Optional[str] = None,
+    resumo: Optional[str] = None,
+    finalizado: bool = False,
+) -> bool:
+    """Cria o card no funil do Doss CRM quando o Bruno qualifica o lead.
+
+    Ate agora o Bruno so criava card no Arcca/Atenderbem (sistema antigo).
+    O lead qualificado aparecia na Inbox mas nunca no pipeline, entao
+    ninguem trabalhava -- foi exatamente a queixa do Michael.
+
+    Tambem aproveita para gravar nome/cidade/e-mail no contato: sem isso
+    o cliente fica salvo como o proprio numero ("554396044243") e o
+    vendedor abre o card sem saber com quem esta falando.
+
+    Nunca levanta excecao: falha aqui nao pode derrubar o atendimento.
+    """
+    if not SUPABASE_KEY or SUPABASE_KEY == "stub":
+        return False
+
+    phone_clean = _normalize_phone(phone)
+    if not phone_clean:
+        return False
+
+    PIPELINE_COMERCIAL = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    STAGE_CONTATO_INICIADO = "05cdab10-c222-4feb-bdcf-a081c7392256"
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            contact_id = await _get_or_create_contact(client, phone_clean, nome)
+            if not contact_id:
+                return False
+
+            # completa o cadastro com o que o cliente informou na conversa
+            patch = {}
+            if nome and nome != phone_clean and len(str(nome).strip()) > 2:
+                patch["name"] = str(nome).strip()
+            if cidade:
+                patch["address_city"] = str(cidade).strip()
+            if email:
+                patch["email"] = str(email).strip()
+            if patch:
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/contacts",
+                    params={"id": f"eq.{contact_id}"},
+                    headers=_headers(),
+                    json=patch,
+                )
+
+            # ja existe card para esse contato? nao duplica
+            r = await client.get(
+                f"{SUPABASE_URL}/rest/v1/pipeline_leads",
+                params={"contact_id": f"eq.{contact_id}", "select": "id", "limit": 1},
+                headers=_headers(),
+            )
+            if r.status_code == 200 and isinstance(r.json(), list) and r.json():
+                return True
+
+            # respeita remocao manual: se alguem tirou esse contato do
+            # funil de proposito, o Bruno nao devolve por conta propria
+            rem = await client.get(
+                f"{SUPABASE_URL}/rest/v1/pipeline_leads_removidos",
+                params={"contact_id": f"eq.{contact_id}", "select": "id", "limit": 1},
+                headers=_headers(),
+            )
+            if rem.status_code == 200 and isinstance(rem.json(), list) and rem.json():
+                logger.info(f"[CRM] {phone_clean} foi removido do funil manualmente -- Bruno nao recria.")
+                return False
+
+            # dono: o agente que ja atende essa conversa, se houver
+            owner_id = None
+            conv = await client.get(
+                f"{SUPABASE_URL}/rest/v1/conversations",
+                params={
+                    "whatsapp_phone": f"eq.{phone_clean}",
+                    "org_id": f"eq.{ORG_ID}",
+                    "select": "id,agent_id",
+                    "order": "created_at.desc",
+                    "limit": 1,
+                },
+                headers=_headers(),
+            )
+            conversation_id = None
+            if conv.status_code == 200 and isinstance(conv.json(), list) and conv.json():
+                conversation_id = conv.json()[0].get("id")
+                owner_id = conv.json()[0].get("agent_id")
+
+            titulo = (str(nome).strip() if nome and nome != phone_clean else phone_clean)
+            if finalizado:
+                titulo = f"{titulo} - pronto para vendedor"
+
+            novo = await client.post(
+                f"{SUPABASE_URL}/rest/v1/pipeline_leads",
+                headers={**_headers(), "Prefer": "return=representation"},
+                json={
+                    "org_id": ORG_ID,
+                    "contact_id": contact_id,
+                    "conversation_id": conversation_id,
+                    "pipeline_id": PIPELINE_COMERCIAL,
+                    "stage_id": STAGE_CONTATO_INICIADO,
+                    "owner_id": owner_id,
+                    "status": "active",
+                    "title": titulo,
+                    "origin": "Bruno IA",
+                },
+            )
+            if novo.status_code >= 300:
+                logger.error(f"[CRM] Falha ao criar card ({novo.status_code}): {novo.text[:200]}")
+                return False
+
+            lead_id = novo.json()[0]["id"] if isinstance(novo.json(), list) and novo.json() else None
+
+            # resumo da conversa vira nota no card, pro vendedor nao
+            # precisar reler a Inbox inteira
+            if lead_id and resumo:
+                await client.post(
+                    f"{SUPABASE_URL}/rest/v1/lead_notes",
+                    headers=_headers(),
+                    json={"org_id": ORG_ID, "lead_id": lead_id, "content": resumo[:4000]},
+                )
+
+            logger.info(f"[CRM] Card criado no funil para {phone_clean} ({titulo})")
+            return True
+    except Exception as e:
+        logger.error(f"[CRM] Erro ao criar card no funil ({phone}): {e}")
+        return False
+
+
 async def log_message(
     phone: str,
     content: str,

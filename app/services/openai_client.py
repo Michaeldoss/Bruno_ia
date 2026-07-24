@@ -11,7 +11,10 @@ from app.services.uniplus_client import uniplus_service
 from app.services.sheets_client import sheets_service
 from app.services.doss_crm_client import arcca_client
 from app.services.twilio_client import twilio_service
-from app.services.crm_inbox_client import log_message as log_message_to_crm
+from app.services.crm_inbox_client import (
+    log_message as log_message_to_crm,
+    criar_lead_no_pipeline,
+)
 from app.services.serasa_client import (
     consultar_cnpj as serasa_consultar,
     format_serasa_summary, get_regime_serasa,
@@ -164,7 +167,7 @@ REGRAS ABSOLUTAS:
 1. NUNCA repita pergunta que o cliente já respondeu
 2. NUNCA mande mais de 1 mensagem seguida sem resposta do cliente
 3. NUNCA invente modelos fora da lista oficial
-4. Quando cliente especificar produto e pedir preço: DÊ O PREÇO imediatamente + CTA
+4. Quando cliente especificar produto e pedir preço: dê o preço + CTA — mas se ainda não souber o nome dele, peça o nome na mesma mensagem (ver REGRA DO NOME ANTES DO MATERIAL)
 5. NUNCA altere nomes de modelos. Use exatamente: DG DTF UV 3002, DG DTF TÊXTIL 3002, Plotter DG 1801i, Plotter DG 1802i, etc.
 6. NUNCA peça informação que o cliente já forneceu. Verifique o histórico.
 7. Na abertura: apresente-se e pergunte nome e cidade na mesma frase. Nunca presuma o segmento.
@@ -185,8 +188,20 @@ Antes de citar preço, confirme que a tecnologia corresponde ao interesse do cli
 Se cliente falou DTF mas pediu preço da 1802i ou outras: corrija antes de dar preço.
 
 REGRA DE DIAGNÓSTICO MÍNIMO ANTES DO PREÇO:
-Para DTF UV, UV Flatbed, UV e Laser: colete o que vai produzir e volume esperado antes de recomendar modelo.
+Para DTF UV, DTF Têxtil, UV Flatbed, UV e Laser: colete o que vai produzir e volume esperado antes de recomendar modelo.
 Para Eco solvente e sublimática: pode citar preço direto se cliente pedir.
+
+REGRA DO NOME ANTES DO MATERIAL — NUNCA VIOLE:
+Antes de enviar preço, foto, vídeo ou catálogo de QUALQUER máquina, você
+precisa saber o nome do cliente. Se ainda não sabe, peça o nome na mesma
+mensagem em que promete o material.
+Exemplo certo: "Te mostro a DTF 3002 agora. Como é seu nome?"
+Depois que o cliente responder o nome, aí sim envie o material e o preço.
+Se o cliente insistir em ver antes de se identificar, envie — mas peça o
+nome logo em seguida. Nunca trave a conversa por causa disso.
+Motivo: material e preço enviados para um número sem nome viram cotação
+solta. O vendedor recebe o card sem saber com quem falar, e o cliente
+some para comparar preço.
 
 LEITURA DE PERFIL:
 PERFIL A — CAÇADOR DE PREÇO: dê o preço imediatamente + 1 pergunta de diagnóstico.
@@ -1259,6 +1274,14 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         serasa_fatores=serasa_fatores,
                         email=lead_state.email or None,
                     )
+                    # Card no Doss CRM. O Arcca e o sistema antigo; sem isso
+                    # o lead qualificado nunca chegava ao funil do CRM novo --
+                    # ficava so na Inbox e ninguem trabalhava.
+                    await criar_lead_no_pipeline(
+                        phone, nome=nome_lead, cidade=cidade_lead,
+                        email=lead_state.email or None, resumo=resumo, finalizado=True,
+                    )
+
                     if resultado.get("ok"):
                         logger.info(f"[ARCCA] Card criado/entregue para {phone}")
                         # 2 = entregue a um vendedor (nao mais retido)
@@ -1329,6 +1352,11 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 cidade=cidade_soft, origem="Bruno IA", finalizado=False,
                 email=lead_state.email or None,
             )
+            await criar_lead_no_pipeline(
+                phone, nome=lead.name, cidade=lead.city or None,
+                email=lead_state.email or None, resumo=resumo_soft, finalizado=False,
+            )
+
             if resultado_soft.get("ok"):
                 logger.info(f"[ARCCA] Card retido (handoff fraco) criado para {phone}")
                 lead_state.card_id = 1
@@ -1377,6 +1405,11 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 cidade=lead.city or "", origem="Bruno IA", finalizado=False,
                 email=lead_state.email or None,
             )
+            await criar_lead_no_pipeline(
+                phone, nome=lead.name, cidade=lead.city or None,
+                email=lead_state.email or None, resumo=resumo_q, finalizado=False,
+            )
+
             if resultado_q.get("ok"):
                 logger.info(f"[ARCCA] Card por qualificacao criado para {phone} ({lead.name})")
                 lead_state.card_id = 1
