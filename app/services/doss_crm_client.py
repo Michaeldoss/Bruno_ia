@@ -46,12 +46,6 @@ def _valid_name(name: str, phone: str) -> bool:
 
 
 def _failure(finalizado: bool, status: str, message: str, **extra) -> dict:
-    """No fechamento forte, falhar interrompe o fluxo antes de `stage=closed`.
-
-    O chamador atual só grava `closed` depois que esta função retorna. Ao lançar
-    exceção em uma entrega final, evitamos encerrar falsamente o lead. No handoff
-    fraco continuamos retornando `ok=False`, porque ele é apenas uma retenção.
-    """
     result = {
         "ok": False,
         "status": status,
@@ -106,7 +100,7 @@ async def _post_with_retry(payload: dict, attempts: int = 4) -> httpx.Response:
                     headers={
                         "Content-Type": "application/json",
                         "x-bruno-key": DOSS_CRM_KEY,
-                        "Idempotency-Key": f"bruno:{payload['phone']}:{'final' if payload['finalizado'] else 'retido'}",
+                        "Idempotency-Key": f"bruno:{payload['phone']}:final",
                     },
                 )
                 if response.status_code not in _RETRYABLE_STATUS:
@@ -150,16 +144,39 @@ async def escalate_to_human(
     finalizado: bool = True,
     email: Optional[str] = None,
 ) -> dict:
+    # Regra central: enquanto o Bruno ainda conversa, nada é enviado ao
+    # endpoint de criação de lead. Isso impede card antecipado, rodízio de
+    # vendedor e troca de whatsapp_instance/agent_id durante a qualificação.
+    if not finalizado:
+        logger.info(
+            "Doss CRM: qualificacao em andamento para %s; sem card e sem transferencia",
+            _normalize_phone(phone),
+        )
+        return {
+            "ok": False,
+            "status": "qualification_in_progress",
+            "agent_name": None,
+            "agent_phone": None,
+            "handoff_status": "not_started",
+        }
+
     if not DOSS_CRM_KEY:
-        return _failure(finalizado, "missing_key", "Doss CRM: BRUNO_API_KEY ausente")
+        return _failure(True, "missing_key", "Doss CRM: BRUNO_API_KEY ausente")
 
     phone_clean = _normalize_phone(phone)
     if len(phone_clean) < 12:
-        return _failure(finalizado, "invalid_phone", f"Telefone invalido para entrega: {phone}")
+        return _failure(True, "invalid_phone", f"Telefone invalido para entrega: {phone}")
 
     if not _valid_name(name, phone_clean):
         logger.warning("Doss CRM: nome ainda invalido para %s", phone_clean)
-        return _failure(finalizado, "invalid_name", f"Nome invalido para entrega do lead {phone_clean}")
+        return _failure(True, "invalid_name", f"Nome invalido para entrega do lead {phone_clean}")
+
+    if not (_clean(produto) or _clean(tecnologia)):
+        return _failure(
+            True,
+            "missing_product",
+            f"Produto ou tecnologia ainda nao identificado para {phone_clean}",
+        )
 
     attribution = {k: v for k, v in _load_attribution(phone_clean).items() if _clean(v)}
     origin_value = _clean(attribution.get("canal")) or _clean(origem) or "Bruno IA"
@@ -183,7 +200,7 @@ async def escalate_to_human(
         "serasa_nivel": serasa_nivel,
         "serasa_recomendacao": serasa_recomendacao,
         "serasa_fatores": serasa_fatores,
-        "finalizado": bool(finalizado),
+        "finalizado": True,
         "email": _clean(email) or None,
         **attribution,
     }
@@ -192,7 +209,7 @@ async def escalate_to_human(
         response = await _post_with_retry(payload)
     except Exception as exc:
         logger.error("Doss CRM: falha definitiva para %s: %s", phone_clean, exc, exc_info=True)
-        return _failure(finalizado, "transport_error", f"Falha de transporte ao entregar {phone_clean}: {exc}")
+        return _failure(True, "transport_error", f"Falha de transporte ao entregar {phone_clean}: {exc}")
 
     try:
         data = response.json()
@@ -201,7 +218,7 @@ async def escalate_to_human(
 
     if response.status_code == 200 and data.get("success"):
         handoff_status = data.get("handoff_status")
-        if finalizado and handoff_status not in _VALID_FINAL_HANDOFF:
+        if handoff_status not in _VALID_FINAL_HANDOFF:
             logger.error("CRM criou o lead, mas handoff nao concluiu para %s: %s", phone_clean, handoff_status)
             return _failure(
                 True,
@@ -233,7 +250,7 @@ async def escalate_to_human(
         missing = data.get("missing", [])
         logger.warning("Doss CRM manteve %s em qualificacao: %s", phone_clean, missing)
         return _failure(
-            finalizado,
+            True,
             "qualifying",
             f"Lead {phone_clean} ainda incompleto: {missing}",
             missing=missing,
@@ -241,7 +258,7 @@ async def escalate_to_human(
 
     logger.error("Doss CRM recusou lead %s: HTTP %s | %s", phone_clean, response.status_code, str(data)[:500])
     return _failure(
-        finalizado,
+        True,
         "crm_rejected",
         f"CRM recusou lead {phone_clean}: HTTP {response.status_code}",
         http_status=response.status_code,
