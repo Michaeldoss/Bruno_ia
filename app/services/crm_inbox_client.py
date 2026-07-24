@@ -139,6 +139,13 @@ async def _get_or_create_conversation(client: httpx.AsyncClient, phone: str, con
 
 
 async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
+    """Retorna True apenas quando existe takeover humano real.
+
+    Uma mensagem humana antiga nao pode bloquear uma nova resposta do Bruno.
+    O takeover e considerado real quando:
+    1. existe conversa aberta atualmente atribuida a um agente diferente do Bruno; ou
+    2. existe mensagem humana enviada depois da mensagem mais recente do cliente.
+    """
     if not SUPABASE_KEY or SUPABASE_KEY == "stub":
         return False
 
@@ -156,37 +163,77 @@ async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
                 params={
                     "whatsapp_phone": f"eq.{phone_clean}",
                     "org_id": f"eq.{ORG_ID}",
-                    "select": "id",
+                    "select": "id,agent_id,whatsapp_instance,status",
+                    "order": "created_at.desc",
                 },
                 headers=_headers(),
                 attempts=2,
             )
             if response.status_code != 200:
                 return False
-            payload = response.json()
-            conv_ids = [row["id"] for row in payload] if isinstance(payload, list) else []
-            if not conv_ids:
+
+            conversations = response.json() if isinstance(response.json(), list) else []
+            if not conversations:
                 return False
 
-            response = await _request_with_retry(
+            # Transferencia explicita: conversa aberta ja pertence a humano.
+            for conv in conversations:
+                agent_id = conv.get("agent_id")
+                instance = conv.get("whatsapp_instance")
+                if (
+                    conv.get("status") == "open"
+                    and agent_id
+                    and agent_id != BRUNO_AGENT_ID
+                    and instance != WHATSAPP_INSTANCE
+                ):
+                    logger.info("[HANDOFF] Conversa aberta atribuida a humano para %s", phone_clean)
+                    return True
+
+            conv_ids = [row["id"] for row in conversations if row.get("id")]
+            ids_filter = "in.(" + ",".join(conv_ids) + ")"
+
+            # Descobre a mensagem mais recente do cliente. Mensagens humanas
+            # anteriores a ela sao historico e nao bloqueiam a nova resposta.
+            inbound_response = await _request_with_retry(
                 client,
                 "GET",
                 f"{SUPABASE_URL}/rest/v1/messages",
                 params={
-                    "conversation_id": "in.(" + ",".join(conv_ids) + ")",
-                    "is_from_contact": "eq.false",
-                    "sender_id": f"neq.{BRUNO_AGENT_ID}",
+                    "conversation_id": ids_filter,
+                    "is_from_contact": "eq.true",
                     "created_at": f"gte.{cutoff}",
-                    "select": "id,created_at,sender_id",
+                    "select": "created_at",
+                    "order": "created_at.desc",
                     "limit": 1,
                 },
                 headers=_headers(),
                 attempts=2,
             )
-            rows = response.json() if response.status_code == 200 else []
-            found = isinstance(rows, list) and bool(rows)
+            inbound_rows = inbound_response.json() if inbound_response.status_code == 200 else []
+            latest_inbound = inbound_rows[0].get("created_at") if isinstance(inbound_rows, list) and inbound_rows else None
+            if not latest_inbound:
+                return False
+
+            human_response = await _request_with_retry(
+                client,
+                "GET",
+                f"{SUPABASE_URL}/rest/v1/messages",
+                params={
+                    "conversation_id": ids_filter,
+                    "is_from_contact": "eq.false",
+                    "sender_id": f"neq.{BRUNO_AGENT_ID}",
+                    "created_at": f"gt.{latest_inbound}",
+                    "select": "id,created_at,sender_id",
+                    "order": "created_at.desc",
+                    "limit": 1,
+                },
+                headers=_headers(),
+                attempts=2,
+            )
+            human_rows = human_response.json() if human_response.status_code == 200 else []
+            found = isinstance(human_rows, list) and bool(human_rows)
             if found:
-                logger.info("[HANDOFF] Humano ativo recentemente para %s", phone_clean)
+                logger.info("[HANDOFF] Humano respondeu depois do cliente para %s", phone_clean)
             return found
     except Exception as exc:
         logger.error("[CRM Inbox] Falha ao checar humano ativo (%s): %s", phone, exc)
@@ -202,7 +249,7 @@ async def log_message(
     media_url: Optional[str] = None,
     whatsapp_id: Optional[str] = None,
 ) -> bool:
-    """Espelha uma mensagem e identifica Bruno como agente nas mensagens de saída."""
+    """Espelha uma mensagem e identifica Bruno como agente nas mensagens de saida."""
     if not SUPABASE_KEY or SUPABASE_KEY == "stub":
         logger.warning("[CRM Inbox] SUPABASE_SERVICE_ROLE_KEY ausente; espelhamento ignorado")
         return False
