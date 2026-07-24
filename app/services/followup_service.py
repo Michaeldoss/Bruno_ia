@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.models.database import SessionLocal, LeadState, Conversation, Lead
 from app.services.twilio_client import twilio_service
 from app.services.crm_inbox_client import human_active_recently
+from app.services.followup_pipeline_client import enviar_para_pipeline_followup
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -123,6 +124,80 @@ async def _enviar_followup(phone: str, step: int, mensagem: str) -> str:
     return await twilio_service.send_whatsapp_message(phone, mensagem)
 
 
+def _montar_contexto_followup(db, lead_state: LeadState) -> tuple:
+    lead = db.query(Lead).filter(Lead.phone == lead_state.phone).first()
+    nome = (lead.name or "") if lead else ""
+    if nome == lead_state.phone:
+        nome = ""
+
+    historico_msgs = (
+        db.query(Conversation)
+        .filter(Conversation.phone == lead_state.phone)
+        .order_by(Conversation.created_at.asc())
+        .limit(100)
+        .all()
+    )
+    prefixos = ("[SISTEMA", "[CAMPANHA")
+    historico_txt = "\n".join(
+        f"{'Cliente' if m.role == 'user' else 'Bruno'}: {m.content[:250]}"
+        for m in historico_msgs
+        if m.content and not any(m.content.startswith(p) for p in prefixos)
+    )
+
+    produto_map = {
+        "1908": "Plotter DG 1908i", "3204": "Plotter DG 3204i",
+        "3202": "Plotter DG 3202i", "1904": "Plotter DG 1904i",
+        "1802": "Plotter DG 1802i", "1801": "Plotter DG 1801i",
+        "dtf uv": "DTF UV", "dtf": "DTF Têxtil", "flatbed": "Flatbed UV",
+        "jinka": "Plotter de Recorte", "laser": "Laser",
+        "eco solvente": "Eco Solvente", "sublimacao": "Sublimática",
+        "dgtex": "Tinta DGtex", "dgeco": "Tinta DGeco",
+    }
+    hist_lower = historico_txt.lower()
+    produto = next((v for k, v in produto_map.items() if k in hist_lower), "")
+    mensagens = [
+        {
+            "content": m.content,
+            "is_from_contact": m.role == "user",
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in historico_msgs
+        if m.content
+    ]
+    return nome, produto, historico_txt, mensagens
+
+
+async def _encaminhar_followup_encerrado(db, lead_state: LeadState):
+    nome, produto, historico_txt, mensagens = _montar_contexto_followup(db, lead_state)
+    resumo = (
+        "Cliente não respondeu à régua automática completa do Bruno.\n\n"
+        f"Etapa alcançada: FU-{lead_state.followup_step or 0}.\n"
+        f"Histórico recente:\n{historico_txt[-2500:]}"
+    )
+    resultado = await enviar_para_pipeline_followup(
+        phone=lead_state.phone,
+        nome=nome,
+        produto=produto,
+        resumo=resumo,
+        mensagens=mensagens,
+        ultimo_followup_em=(
+            lead_state.followup_sent_at.isoformat()
+            if lead_state.followup_sent_at
+            else None
+        ),
+    )
+    if not resultado.get("success"):
+        raise RuntimeError("CRM não confirmou movimentação para a etapa Follow-up")
+
+    lead_state.stage = "followup_closed"
+    db.commit()
+    logger.info(
+        "[FOLLOWUP] %s movido para Pipeline/Follow-up após 72h sem resposta. card=%s",
+        lead_state.phone,
+        resultado.get("pipeline_lead_id"),
+    )
+
+
 async def _processar_lead_followup(db, lead_state: LeadState):
     agora_utc = utcnow()
     if lead_state.stage in ("closed", "followup_closed"):
@@ -151,9 +226,7 @@ async def _processar_lead_followup(db, lead_state: LeadState):
     step_atual = lead_state.followup_step or 0
 
     if minutos_inativo >= MINUTOS_FECHAR and step_atual >= len(FOLLOWUP_MINUTOS):
-        lead_state.stage = "followup_closed"
-        db.commit()
-        logger.info("[FOLLOWUP] %s encerrado por 72h de inatividade.", lead_state.phone)
+        await _encaminhar_followup_encerrado(db, lead_state)
         return
     if step_atual >= len(FOLLOWUP_MINUTOS) or minutos_inativo < FOLLOWUP_MINUTOS[step_atual]:
         return
@@ -164,37 +237,7 @@ async def _processar_lead_followup(db, lead_state: LeadState):
     if not esta_em_horario_comercial():
         return
 
-    lead = db.query(Lead).filter(Lead.phone == lead_state.phone).first()
-    nome = (lead.name or "") if lead else ""
-    if nome == lead_state.phone:
-        nome = ""
-
-    historico_msgs = (
-        db.query(Conversation)
-        .filter(Conversation.phone == lead_state.phone)
-        .order_by(Conversation.created_at.asc())
-        .limit(30)
-        .all()
-    )
-    prefixos = ("[SISTEMA", "[CAMPANHA", "[FOLLOWUP")
-    historico_txt = "\n".join(
-        f"{'Cliente' if m.role == 'user' else 'Bruno'}: {m.content[:250]}"
-        for m in historico_msgs
-        if m.content and not any(m.content.startswith(p) for p in prefixos)
-    )
-
-    produto_map = {
-        "1908": "Plotter DG 1908i", "3204": "Plotter DG 3204i",
-        "3202": "Plotter DG 3202i", "1904": "Plotter DG 1904i",
-        "1802": "Plotter DG 1802i", "1801": "Plotter DG 1801i",
-        "dtf uv": "DTF UV", "dtf": "DTF Têxtil", "flatbed": "Flatbed UV",
-        "jinka": "Plotter de Recorte", "laser": "Laser",
-        "eco solvente": "Eco Solvente", "sublimacao": "Sublimática",
-        "dgtex": "Tinta DGtex", "dgeco": "Tinta DGeco",
-    }
-    hist_lower = historico_txt.lower()
-    produto = next((v for k, v in produto_map.items() if k in hist_lower), "")
-
+    nome, produto, historico_txt, _ = _montar_contexto_followup(db, lead_state)
     step_numero = step_atual + 1
     mensagem = await _gerar_mensagem_followup(step_numero, nome, produto, historico_txt)
     sid = await _enviar_followup(lead_state.phone, step_numero, mensagem)
