@@ -209,6 +209,13 @@ REGRAS DO DIAGNÓSTICO:
 - Diagnóstico não é interrogatório. Intercale com informações de valor
 
 REGRAS DE COLETA DE DADOS:
+- NOME: pergunte o nome do cliente logo na PRIMEIRA ou SEGUNDA resposta sua, sempre
+  junto de outra coisa útil, nunca como interrogatório isolado.
+  Exemplos bons: "Antes de te indicar o modelo certo, como posso te chamar?"
+                 "Perfeito! Como é seu nome? Assim já deixo tudo anotado certinho."
+  Se o cliente não responder o nome, NÃO insista mais de 1 vez — siga a conversa.
+  Nome é o dado de menor atrito e o mais importante: sem ele o cliente entra no
+  sistema como um número solto e o vendedor não sabe com quem está falando.
 - Se cliente mandou e-mail, NUNCA peça e-mail de novo
 - Se cliente mandou telefone, NUNCA peça telefone de novo (o telefone do WhatsApp ja conta como telefone -- nunca peca)
 - Se cliente mandou CNPJ, NUNCA peça CNPJ de novo
@@ -975,7 +982,15 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
         ])
 
         if despedida_detectada and lead_state.stage not in ("closed",):
-            if not lead_state.card_id:
+            # card_id: 1 = card criado mas RETIDO (sem dono), 2 = ja entregue
+            # a um vendedor. Antes a condicao era "not lead_state.card_id",
+            # entao qualquer card ja criado (handoff fraco / qualificacao)
+            # impedia a entrega no fechamento -- o lead ficava retido para
+            # sempre, sem dono, e ninguem trabalhava. Agora so nao repete
+            # quando ja foi entregue de verdade. O endpoint do CRM cuida do
+            # resto: se o card existe e chega finalizado=true, ele atribui o
+            # vendedor do rodizio e notifica.
+            if lead_state.card_id != 2:
                 PALAVRAS_NAO_NOME = {
                     "tudo","ok","oi","ola","opa","sim","nao","pode","certo","otimo","legal",
                     "beleza","entendi","show","obrigado","obrigada","claro","bom","boa",
@@ -1245,8 +1260,9 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                         email=lead_state.email or None,
                     )
                     if resultado.get("ok"):
-                        logger.info(f"[ARCCA] Card criado para {phone}")
-                        lead_state.card_id = 1
+                        logger.info(f"[ARCCA] Card criado/entregue para {phone}")
+                        # 2 = entregue a um vendedor (nao mais retido)
+                        lead_state.card_id = 2
 
                         # Avisa o cliente quem assume e por qual numero -- a
                         # partir daqui e ESSE numero que ele deve chamar, nao
@@ -1319,6 +1335,54 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
                 db.commit()
             else:
                 logger.error(f"[ARCCA] FALHA ao criar card retido para {phone}")
+
+        # ── Card por QUALIFICACAO ──────────────────────────────────
+        # Antes o card so nascia em dois casos: despedida (handoff forte)
+        # ou o Bruno dizer alguma frase tipo "vou verificar com a equipe"
+        # (handoff fraco). Conversa que engajava de verdade mas terminava
+        # sem nenhuma dessas frases NUNCA virava card -- o lead ficava so
+        # na Inbox e ninguem trabalhava. Aconteceu com metade dos leads.
+        #
+        # Agora, se o cliente ja se identificou (nome de verdade, nao o
+        # telefone) E demonstrou interesse concreto em produto, o card
+        # nasce retido, sem dono. Retido de proposito: e lead qualificado,
+        # mas ainda nao e entrega formal pro vendedor -- isso continua
+        # sendo o handoff forte.
+        elif (
+            not despedida_detectada
+            and lead_state.stage not in ("closed",)
+            and not lead_state.card_id
+            and lead.name
+            and lead.name != phone
+            and len(str(lead.name).strip()) > 2
+            and sum(1 for m in messages if m.get("role") == "user") >= 3
+        ):
+            historico_q = []
+            for msg in messages[-10:]:
+                txt = str(msg.get("content", "")).strip()
+                if txt and not txt.startswith(("[SISTEMA", "[FOLLOWUP", "Regime:", "Score:", "CNPJ Ativo:", "Negativos:", "INSTRUCAO:")):
+                    historico_q.append(f"{'Cliente' if msg.get('role') == 'user' else 'Bruno'}: {txt[:250]}")
+            resumo_q = (
+                "=== LEAD QUALIFICADO (Bruno ainda conversando) ===\n\n"
+                f"Cliente:  {lead.name}\nWhatsApp: {phone}\n"
+                f"Cidade:   {lead.city or 'nao informada'}\n"
+                f"E-mail:   {lead_state.email or 'nao informado'}\n\n"
+                "Cliente se identificou e demonstrou interesse concreto. Card criado\n"
+                "retido para o lead nao se perder caso a conversa esfrie antes do\n"
+                "fechamento.\n\n"
+                "── CONVERSA (ultimas mensagens) ──\n" + "\n".join(historico_q)
+            )
+            resultado_q = await arcca_client(
+                phone, lead.name, resumo_q,
+                cidade=lead.city or "", origem="Bruno IA", finalizado=False,
+                email=lead_state.email or None,
+            )
+            if resultado_q.get("ok"):
+                logger.info(f"[ARCCA] Card por qualificacao criado para {phone} ({lead.name})")
+                lead_state.card_id = 1
+                db.commit()
+            else:
+                logger.error(f"[ARCCA] FALHA ao criar card por qualificacao para {phone}")
 
         elif lead_state.stage == "active":
             if any(kw in reply_lower for kw in [
