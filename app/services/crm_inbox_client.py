@@ -76,7 +76,6 @@ async def _get_or_create_contact(client: httpx.AsyncClient, phone: str, nome: Op
         json={"org_id": ORG_ID, "name": nome or phone, "phone": phone, "origin": "Bruno IA"},
     )
     if response.status_code >= 300:
-        # Corrida de criação: busca novamente antes de desistir.
         retry = await _request_with_retry(
             client,
             "GET",
@@ -176,9 +175,9 @@ async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
                 params={
                     "conversation_id": "in.(" + ",".join(conv_ids) + ")",
                     "is_from_contact": "eq.false",
-                    "sender_id": "not.is.null",
+                    "sender_id": f"neq.{BRUNO_AGENT_ID}",
                     "created_at": f"gte.{cutoff}",
-                    "select": "id,created_at",
+                    "select": "id,created_at,sender_id",
                     "limit": 1,
                 },
                 headers=_headers(),
@@ -190,8 +189,6 @@ async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
                 logger.info("[HANDOFF] Humano ativo recentemente para %s", phone_clean)
             return found
     except Exception as exc:
-        # Falha aberta apenas nessa consulta: indisponibilidade do CRM não pode
-        # deixar todos os clientes sem resposta do Bruno.
         logger.error("[CRM Inbox] Falha ao checar humano ativo (%s): %s", phone, exc)
         return False
 
@@ -205,7 +202,7 @@ async def log_message(
     media_url: Optional[str] = None,
     whatsapp_id: Optional[str] = None,
 ) -> bool:
-    """Espelha uma mensagem e retorna True apenas quando todas as escritas essenciais terminam."""
+    """Espelha uma mensagem e identifica Bruno como agente nas mensagens de saída."""
     if not SUPABASE_KEY or SUPABASE_KEY == "stub":
         logger.warning("[CRM Inbox] SUPABASE_SERVICE_ROLE_KEY ausente; espelhamento ignorado")
         return False
@@ -224,21 +221,25 @@ async def log_message(
             if not conversation_id:
                 raise RuntimeError("conversa nao criada/localizada")
 
+            message_payload = {
+                "org_id": ORG_ID,
+                "conversation_id": conversation_id,
+                "content": content[:4000],
+                "is_from_contact": is_from_contact,
+                "type": msg_type,
+                "media_url": media_url,
+                "whatsapp_id": whatsapp_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if not is_from_contact:
+                message_payload["sender_id"] = BRUNO_AGENT_ID
+
             message_response = await _request_with_retry(
                 client,
                 "POST",
                 f"{SUPABASE_URL}/rest/v1/messages",
                 headers=_headers(),
-                json={
-                    "org_id": ORG_ID,
-                    "conversation_id": conversation_id,
-                    "content": content[:4000],
-                    "is_from_contact": is_from_contact,
-                    "type": msg_type,
-                    "media_url": media_url,
-                    "whatsapp_id": whatsapp_id,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                },
+                json=message_payload,
             )
             if message_response.status_code >= 300 and message_response.status_code != 409:
                 raise RuntimeError(f"mensagem recusada: HTTP {message_response.status_code} {message_response.text[:300]}")
@@ -246,6 +247,8 @@ async def log_message(
             patch_body = {
                 "last_message": content[:300],
                 "last_message_at": datetime.now(timezone.utc).isoformat(),
+                "whatsapp_instance": WHATSAPP_INSTANCE,
+                "agent_id": BRUNO_AGENT_ID,
             }
             if is_from_contact:
                 patch_body["unread_count"] = current_unread + 1
