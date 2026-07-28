@@ -1,8 +1,16 @@
-"""Memoria operacional recorrente do Doss CRM.
+"""Memoria operacional incremental do Doss CRM.
 
-O servico le conversas abertas, calcula tempos reais de resposta, transcreve
-audios quando possivel e grava recomendacoes. Ele nao envia mensagens, nao
-fecha conversas e nao altera o pipeline automaticamente.
+Regras de custo e qualidade:
+- somente conversas abertas sao consideradas;
+- uma conversa sem mensagem nova nunca chama a IA;
+- a primeira analise usa um historico limitado;
+- as proximas analises usam o resumo salvo + somente mensagens novas;
+- tempo parado e urgencia continuam sendo atualizados sem IA;
+- todo uso Anthropic e registrado no rastreador existente;
+- o ciclo respeita um teto mensal conservador em reais.
+
+Este servico apenas analisa e recomenda. Nao envia mensagens, nao fecha
+conversas e nao altera o pipeline automaticamente durante a fase de testes.
 """
 
 import asyncio
@@ -10,14 +18,18 @@ import base64
 import binascii
 import json
 import logging
+import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from anthropic import AsyncAnthropic
+from sqlalchemy import func
 
 from app.config import get_settings
+from app.models.database import SessionLocal, UsageLog
+from app.services.usage_tracker import registrar_uso_anthropic
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -27,6 +39,15 @@ SUPABASE_KEY = settings.SUPABASE_SERVICE_ROLE_KEY
 ORG_ID = "dafa7ea5-08c4-44dd-886e-d58905fca38c"
 ANTHROPIC_KEY = getattr(settings, "ANTHROPIC_API_KEY", "")
 OPENAI_KEY = getattr(settings, "OPENAI_API_KEY", "")
+
+MODEL = "claude-haiku-4-5-20251001"
+MONTHLY_BUDGET_BRL = float(os.getenv("CRM_AI_MONTHLY_BUDGET_BRL", "250"))
+USD_BRL_SAFETY_RATE = float(os.getenv("CRM_AI_USD_BRL", "6.00"))
+MAX_ANALYSES_PER_CYCLE = int(os.getenv("CRM_AI_MAX_ANALYSES_PER_CYCLE", "60"))
+MAX_INITIAL_MESSAGES = int(os.getenv("CRM_AI_MAX_INITIAL_MESSAGES", "40"))
+MAX_DELTA_MESSAGES = int(os.getenv("CRM_AI_MAX_DELTA_MESSAGES", "40"))
+CONTEXT_MESSAGES = int(os.getenv("CRM_AI_CONTEXT_MESSAGES", "6"))
+MAX_OUTPUT_TOKENS = int(os.getenv("CRM_AI_MAX_OUTPUT_TOKENS", "650"))
 
 _anthropic = (
     AsyncAnthropic(api_key=ANTHROPIC_KEY)
@@ -69,20 +90,60 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-def _response_metrics(messages: List[dict]) -> Tuple[Optional[int], Optional[int]]:
-    """Mede o tempo entre a ultima mensagem do cliente e a primeira resposta.
+def _same_timestamp(a: Optional[str], b: Optional[str]) -> bool:
+    da = _parse_datetime(a)
+    db = _parse_datetime(b)
+    if da and db:
+        return da == db
+    return (a or "") == (b or "")
 
-    Mensagens consecutivas do cliente formam um unico bloco; o relogio comeca
-    na ultima mensagem desse bloco, evitando inflar o tempo de resposta.
-    """
+
+def _monthly_usage_brl() -> float:
+    """Retorna custo mensal da camada crm_memory usando cambio conservador."""
+    db = None
+    try:
+        now = datetime.utcnow()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        db = SessionLocal()
+        value = (
+            db.query(func.coalesce(func.sum(UsageLog.custo_usd), 0.0))
+            .filter(
+                UsageLog.agente == "crm_memory",
+                UsageLog.servico == "anthropic",
+                UsageLog.created_at >= month_start,
+            )
+            .scalar()
+        )
+        return round(float(value or 0.0) * USD_BRL_SAFETY_RATE, 2)
+    except Exception as exc:
+        # Em caso de falha no medidor, o ciclo continua limitado por quantidade
+        # e por delta; nunca volta ao comportamento de reler tudo.
+        logger.error("[CRM MEMORY] Falha ao consultar custo mensal: %s", exc)
+        return 0.0
+    finally:
+        if db:
+            db.close()
+
+
+def _budget_available() -> bool:
+    used = _monthly_usage_brl()
+    if used >= MONTHLY_BUDGET_BRL:
+        logger.error(
+            "[CRM MEMORY] Teto mensal atingido: R$ %.2f de R$ %.2f. IA pausada.",
+            used,
+            MONTHLY_BUDGET_BRL,
+        )
+        return False
+    return True
+
+
+def _response_metrics(messages: List[dict]) -> Tuple[Optional[int], Optional[int]]:
     waits: List[int] = []
     pending_customer_at: Optional[datetime] = None
-
     for msg in messages:
         created = _parse_datetime(msg.get("created_at"))
         if not created:
             continue
-
         if msg.get("is_from_contact"):
             pending_customer_at = created
         elif pending_customer_at:
@@ -90,41 +151,34 @@ def _response_metrics(messages: List[dict]) -> Tuple[Optional[int], Optional[int
             if seconds >= 0:
                 waits.append(seconds)
             pending_customer_at = None
-
     if not waits:
         return None, None
     return int(sum(waits) / len(waits)), max(waits)
 
 
 def _decode_base64_media(value: str) -> Optional[Tuple[bytes, str, str]]:
-    """Decodifica data URI e os formatos legados salvos pelo webhook."""
     raw = (value or "").strip()
     if not raw or "base64," not in raw:
         return None
-
     header, encoded = raw.split("base64,", 1)
     encoded = re.sub(r"\s+", "", encoded)
     if not encoded:
         return None
-
-    # Corrige padding ausente sem aceitar conteudo arbitrario.
     encoded += "=" * (-len(encoded) % 4)
     try:
         audio_bytes = base64.b64decode(encoded, validate=False)
     except (binascii.Error, ValueError):
         return None
-
     if len(audio_bytes) < 32:
         return None
-
-    header_lower = header.lower()
-    if "mpeg" in header_lower or "mp3" in header_lower:
+    header = header.lower()
+    if "mpeg" in header or "mp3" in header:
         return audio_bytes, "audio/mpeg", "mp3"
-    if "wav" in header_lower:
+    if "wav" in header:
         return audio_bytes, "audio/wav", "wav"
-    if "mp4" in header_lower or "m4a" in header_lower:
+    if "mp4" in header or "m4a" in header:
         return audio_bytes, "audio/mp4", "m4a"
-    if "webm" in header_lower:
+    if "webm" in header:
         return audio_bytes, "audio/webm", "webm"
     return audio_bytes, "audio/ogg", "ogg"
 
@@ -135,39 +189,29 @@ async def _load_audio_bytes(
     decoded = _decode_base64_media(media_value)
     if decoded:
         return decoded
-
     if not re.match(r"^https?://", media_value or "", flags=re.I):
         raise ValueError("midia sem URL HTTP valida e sem Base64 reconhecivel")
-
     if len(media_value) > 8000:
         raise ValueError("URL de midia excede o limite seguro")
-
     response = await client.get(media_value, timeout=30.0, follow_redirects=True)
     response.raise_for_status()
     if not response.content or len(response.content) < 32:
         raise ValueError("arquivo de audio vazio")
-
     content_type = (response.headers.get("content-type") or "audio/ogg").split(";")[0]
     extension = {
-        "audio/mpeg": "mp3",
-        "audio/mp3": "mp3",
-        "audio/wav": "wav",
-        "audio/x-wav": "wav",
-        "audio/mp4": "m4a",
-        "audio/webm": "webm",
+        "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/wav": "wav",
+        "audio/x-wav": "wav", "audio/mp4": "m4a", "audio/webm": "webm",
         "audio/ogg": "ogg",
     }.get(content_type.lower(), "ogg")
     return response.content, content_type, extension
 
 
-async def _transcribe_pending_audio(
+async def _transcribe_new_audio(
     client: httpx.AsyncClient, conversation_id: str, messages: List[dict]
 ) -> Dict[str, str]:
     transcripts: Dict[str, str] = {}
     if not OPENAI_KEY or OPENAI_KEY == "stub":
         return transcripts
-
-    terminal_statuses = {"completed", "invalid_media", "unsupported"}
 
     for msg in messages:
         msg_id = msg.get("id")
@@ -192,45 +236,36 @@ async def _transcribe_pending_audio(
             row = rows[0]
             if row.get("transcription"):
                 transcripts[msg_id] = row["transcription"]
-            if row.get("status") in terminal_statuses or row.get("status") == "processing":
+            if row.get("status") in {"completed", "processing", "invalid_media", "unsupported"}:
                 continue
 
-        now = datetime.now(timezone.utc).isoformat()
         await client.post(
             f"{SUPABASE_URL}/rest/v1/audio_transcriptions",
-            headers={
-                **_headers(),
-                "Prefer": "resolution=merge-duplicates,return=representation",
-            },
+            headers={**_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
             json={
                 "org_id": ORG_ID,
                 "message_id": msg_id,
                 "conversation_id": conversation_id,
-                # Nao duplica Base64 enorme na tabela de transcricoes.
                 "media_url": media_value if len(media_value) <= 8000 else None,
                 "status": "processing",
                 "error": None,
-                "updated_at": now,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             },
         )
 
         try:
             audio_bytes, content_type, extension = await _load_audio_bytes(client, media_value)
-            filename = f"audio-{msg_id}.{extension}"
-            files = {"file": (filename, audio_bytes, content_type)}
-            data = {"model": "whisper-1", "response_format": "json", "language": "pt"}
-            transcription_response = await client.post(
+            response = await client.post(
                 "https://api.openai.com/v1/audio/transcriptions",
                 headers={"Authorization": f"Bearer {OPENAI_KEY}"},
-                files=files,
-                data=data,
+                files={"file": (f"audio-{msg_id}.{extension}", audio_bytes, content_type)},
+                data={"model": "whisper-1", "response_format": "json", "language": "pt"},
                 timeout=90.0,
             )
-            transcription_response.raise_for_status()
-            text = (transcription_response.json().get("text") or "").strip()
+            response.raise_for_status()
+            text = (response.json().get("text") or "").strip()
             if not text:
                 raise ValueError("transcricao retornou vazia")
-
             transcripts[msg_id] = text
             await client.patch(
                 f"{SUPABASE_URL}/rest/v1/audio_transcriptions",
@@ -245,16 +280,11 @@ async def _transcribe_pending_audio(
                 },
             )
         except ValueError as exc:
-            logger.warning("[CRM MEMORY] Audio invalido %s: %s", msg_id, exc)
             await client.patch(
                 f"{SUPABASE_URL}/rest/v1/audio_transcriptions",
                 params={"message_id": f"eq.{msg_id}"},
                 headers=_headers("return=minimal"),
-                json={
-                    "status": "invalid_media",
-                    "error": str(exc)[:500],
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                },
+                json={"status": "invalid_media", "error": str(exc)[:500], "updated_at": datetime.now(timezone.utc).isoformat()},
             )
         except Exception as exc:
             logger.error("[CRM MEMORY] Falha ao transcrever audio %s: %s", msg_id, exc)
@@ -262,34 +292,25 @@ async def _transcribe_pending_audio(
                 f"{SUPABASE_URL}/rest/v1/audio_transcriptions",
                 params={"message_id": f"eq.{msg_id}"},
                 headers=_headers("return=minimal"),
-                json={
-                    "status": "failed",
-                    "error": str(exc)[:500],
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                },
+                json={"status": "failed", "error": str(exc)[:500], "updated_at": datetime.now(timezone.utc).isoformat()},
             )
-
     return transcripts
 
 
-def _normalize_operational_result(
+def _normalize_result(
     result: Dict[str, Any], last_speaker: str, inactive_minutes: Optional[int]
 ) -> Dict[str, Any]:
-    """Impede contradicoes entre o ultimo interlocutor e a classificacao."""
     normalized = dict(result or {})
     normalized["last_speaker"] = last_speaker
-
-    protected_statuses = {"order_authorized", "critical", "support"}
-    status = str(normalized.get("analysis_status") or "").strip().lower()
+    status = str(normalized.get("analysis_status") or "").lower()
+    protected = {"order_authorized", "critical", "support"}
 
     if last_speaker == "customer":
         normalized["needs_agent_reply"] = True
         normalized["needs_followup"] = False
         normalized["should_close"] = False
-        if status not in protected_statuses:
+        if status not in protected:
             normalized["analysis_status"] = "awaiting_agent"
-        if not normalized.get("recommended_action"):
-            normalized["recommended_action"] = "Responder o cliente"
         if (inactive_minutes or 0) >= 60 and normalized.get("priority") in {None, "", "low", "normal"}:
             normalized["priority"] = "high"
     elif last_speaker == "agent":
@@ -305,143 +326,151 @@ def _normalize_operational_result(
     if normalized.get("should_close"):
         normalized["needs_agent_reply"] = False
         normalized["needs_followup"] = False
-
     if normalized.get("needs_agent_reply"):
         normalized["needs_followup"] = False
         normalized["should_close"] = False
-
     return normalized
 
 
-async def _analyze_with_ai(
-    conversation: dict,
-    contact: dict,
-    agent: dict,
-    messages: List[dict],
-    transcripts: Dict[str, str],
-    previous: dict,
-) -> Dict[str, Any]:
-    avg_response, max_response = _response_metrics(messages)
-    now = datetime.now(timezone.utc)
-    last_message_at = conversation.get("last_message_at") or (
-        messages[-1].get("created_at") if messages else None
-    )
-    last_dt = _parse_datetime(last_message_at)
-    inactive_minutes = max(0, int((now - last_dt).total_seconds() / 60)) if last_dt else None
-
-    last_speaker = "unknown"
-    if messages:
-        last_speaker = "customer" if messages[-1].get("is_from_contact") else "agent"
-
-    history_lines: List[str] = []
-    for msg in messages[-80:]:
+def _format_messages(messages: List[dict], transcripts: Dict[str, str]) -> str:
+    lines: List[str] = []
+    for msg in messages:
         role = "CLIENTE" if msg.get("is_from_contact") else "AGENTE"
         content = (msg.get("content") or "").strip()
         if msg.get("id") in transcripts:
             content = f"[AUDIO TRANSCRITO] {transcripts[msg['id']]}"
-        history_lines.append(f"{role} | {msg.get('created_at')}: {content[:1200]}")
-    history = "\n".join(history_lines)
+        if not content:
+            content = f"[{str(msg.get('type') or 'mensagem').upper()} SEM TEXTO]"
+        lines.append(f"{role} | {msg.get('created_at')}: {content[:900]}")
+    return "\n".join(lines)
+
+
+async def _analyze_incremental(
+    conversation: dict,
+    contact: dict,
+    agent: dict,
+    all_messages: List[dict],
+    prompt_messages: List[dict],
+    transcripts: Dict[str, str],
+    previous: dict,
+) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    last_message_at = conversation.get("last_message_at") or all_messages[-1].get("created_at")
+    last_dt = _parse_datetime(last_message_at)
+    inactive_minutes = max(0, int((now - last_dt).total_seconds() / 60)) if last_dt else None
+    last_speaker = "customer" if all_messages[-1].get("is_from_contact") else "agent"
+    avg_response, max_response = _response_metrics(all_messages)
 
     fallback: Dict[str, Any] = {
         "analysis_status": "awaiting_agent" if last_speaker == "customer" else "awaiting_customer",
-        "subject": "",
-        "customer_intent": "",
+        "subject": previous.get("subject") or "",
+        "customer_intent": previous.get("customer_intent") or "",
         "last_speaker": last_speaker,
         "pending_question": last_speaker == "customer",
         "needs_agent_reply": last_speaker == "customer",
         "needs_followup": False,
         "should_close": False,
         "priority": "high" if last_speaker == "customer" and (inactive_minutes or 0) >= 60 else "normal",
-        "summary": "Analise semantica indisponivel; classificacao baseada na ultima mensagem.",
+        "summary": previous.get("summary") or "Classificacao baseada na ultima mensagem.",
         "recommended_action": "Responder o cliente" if last_speaker == "customer" else "Aguardar resposta do cliente",
-        "memory": {},
+        "memory": previous.get("memory") if isinstance(previous.get("memory"), dict) else {},
     }
 
+    history = _format_messages(prompt_messages, transcripts)
     if not _anthropic or not history:
         result = fallback
+        usage_data = {"input_tokens": 0, "output_tokens": 0, "model": MODEL, "used_ai": False}
     else:
-        system = """Voce e o supervisor comercial do Doss CRM. Leia a conversa inteira e responda APENAS JSON valido.
-Classifique com rigor operacional e nao invente fatos.
-Regras obrigatorias:
-- O campo last_speaker deve refletir a ultima mensagem real.
-- Se o cliente falou por ultimo, needs_agent_reply=true, needs_followup=false e a conversa nao pode ser encerrada.
-- Follow-up somente quando o agente falou por ultimo e aguarda retorno do cliente.
-- should_close somente quando o assunto estiver concluido, sem pergunta, promessa ou acao pendente.
-- Pedido autorizado deve ter prioridade high ou critical.
-- Memoria deve conter somente fatos explicitos.
+        previous_context = {
+            "summary": (previous.get("summary") or "")[:1800],
+            "subject": previous.get("subject"),
+            "customer_intent": previous.get("customer_intent"),
+            "analysis_status": previous.get("analysis_status"),
+            "memory": previous.get("memory") if isinstance(previous.get("memory"), dict) else {},
+        }
+        system = """Voce e o supervisor comercial do Doss CRM. Atualize a analise usando o resumo anterior e as mensagens novas. Responda APENAS JSON valido.
+Regras:
+- nao invente fatos e nao remova fatos anteriores sem contradicao explicita;
+- cliente por ultimo: needs_agent_reply=true, needs_followup=false, should_close=false;
+- follow-up somente se o agente falou por ultimo e aguarda o cliente;
+- should_close somente com assunto realmente concluido, sem pergunta, promessa ou acao pendente;
+- pedido autorizado deve ser high ou critical;
+- summary deve consolidar o historico anterior com as novidades, de forma curta e operacional;
+- memory deve conter somente fatos explicitos e uteis.
 JSON:
-{
-  "analysis_status":"awaiting_agent|awaiting_customer|negotiation_active|proposal_pending|order_authorized|support|followup_recommended|ready_to_close|critical",
-  "subject":"texto curto",
-  "customer_intent":"texto curto",
-  "last_speaker":"customer|agent",
-  "pending_question":true,
-  "needs_agent_reply":true,
-  "needs_followup":false,
-  "should_close":false,
-  "priority":"low|normal|high|critical",
-  "summary":"resumo operacional",
-  "recommended_action":"acao objetiva",
-  "memory":{"facts":[],"products":[],"objections":[],"promises":[],"next_steps":[],"preferences":[]}
-}"""
+{"analysis_status":"awaiting_agent|awaiting_customer|negotiation_active|proposal_pending|order_authorized|support|followup_recommended|ready_to_close|critical","subject":"texto curto","customer_intent":"texto curto","last_speaker":"customer|agent","pending_question":true,"needs_agent_reply":true,"needs_followup":false,"should_close":false,"priority":"low|normal|high|critical","summary":"resumo consolidado","recommended_action":"acao objetiva","memory":{"facts":[],"products":[],"objections":[],"promises":[],"next_steps":[],"preferences":[]}}"""
         user = f"""CLIENTE: {contact.get('name') or contact.get('phone') or ''}
 EMPRESA: {contact.get('company') or ''}
 AGENTE: {agent.get('name') or ''}
 STATUS CRM: {conversation.get('status')}
 ULTIMO INTERLOCUTOR CALCULADO: {last_speaker}
 TEMPO INATIVO MIN: {inactive_minutes}
-ANALISE ANTERIOR: {json.dumps(previous or {}, ensure_ascii=False)[:3000]}
+CONTEXTO ANTERIOR: {json.dumps(previous_context, ensure_ascii=False)[:4200]}
 
-CONVERSA:
+MENSAGENS NOVAS E CONTEXTO IMEDIATO:
 {history}"""
         try:
             response = await asyncio.wait_for(
                 _anthropic.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=1200,
+                    model=MODEL,
+                    max_tokens=MAX_OUTPUT_TOKENS,
                     temperature=0.0,
                     system=system,
                     messages=[{"role": "user", "content": user}],
                 ),
                 timeout=45.0,
             )
+            registrar_uso_anthropic(MODEL, response.usage, agente="crm_memory")
             result = _safe_json(response.content[0].text) or fallback
+            usage_data = {
+                "input_tokens": int(getattr(response.usage, "input_tokens", 0) or 0),
+                "output_tokens": int(getattr(response.usage, "output_tokens", 0) or 0),
+                "cache_creation_tokens": int(getattr(response.usage, "cache_creation_input_tokens", 0) or 0),
+                "cache_read_tokens": int(getattr(response.usage, "cache_read_input_tokens", 0) or 0),
+                "model": MODEL,
+                "used_ai": True,
+            }
         except Exception as exc:
             logger.error("[CRM MEMORY] IA falhou na conversa %s: %s", conversation.get("id"), exc)
             result = fallback
+            usage_data = {"input_tokens": 0, "output_tokens": 0, "model": MODEL, "used_ai": False, "error": str(exc)[:300]}
 
-    result = _normalize_operational_result(result, last_speaker, inactive_minutes)
-    result["avg_response_seconds"] = avg_response
-    result["max_response_seconds"] = max_response
-    result["inactive_minutes"] = inactive_minutes
-    result["last_message_at"] = last_message_at
+    result = _normalize_result(result, last_speaker, inactive_minutes)
+    result.update({
+        "avg_response_seconds": avg_response,
+        "max_response_seconds": max_response,
+        "inactive_minutes": inactive_minutes,
+        "last_message_at": last_message_at,
+        "usage": usage_data,
+        "processing_mode": "initial" if not previous else "incremental",
+        "messages_sent_to_ai": len(prompt_messages),
+    })
     return result
 
 
-async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -> None:
-    conversation_id = conversation["id"]
-    messages_res = await client.get(
-        f"{SUPABASE_URL}/rest/v1/messages",
-        params={
-            "conversation_id": f"eq.{conversation_id}",
-            "is_internal_note": "eq.false",
-            "deleted_at": "is.null",
-            "select": "id,content,type,media_url,is_from_contact,created_at,sender_id",
-            "order": "created_at.asc",
-            "limit": 500,
-        },
-        headers=_headers(),
-    )
-    messages = (
-        messages_res.json()
-        if messages_res.status_code == 200 and isinstance(messages_res.json(), list)
-        else []
-    )
-    if not messages:
+async def _refresh_unchanged_without_ai(
+    client: httpx.AsyncClient, conversation: dict, previous: dict
+) -> None:
+    last_dt = _parse_datetime(conversation.get("last_message_at"))
+    if not last_dt:
         return
+    inactive = max(0, int((datetime.now(timezone.utc) - last_dt).total_seconds() / 60))
+    priority = previous.get("priority") or "normal"
+    if previous.get("last_speaker") == "customer" and inactive >= 60 and priority in {"low", "normal"}:
+        priority = "high"
+    if inactive == previous.get("inactive_minutes") and priority == previous.get("priority"):
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    await client.patch(
+        f"{SUPABASE_URL}/rest/v1/conversation_ai_memory",
+        params={"conversation_id": f"eq.{conversation['id']}"},
+        headers=_headers("return=minimal"),
+        json={"inactive_minutes": inactive, "priority": priority, "updated_at": now},
+    )
 
-    contact = conversation.get("contacts") or {}
-    agent = conversation.get("profiles") or {}
+
+async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -> bool:
+    conversation_id = conversation["id"]
     prev_res = await client.get(
         f"{SUPABASE_URL}/rest/v1/conversation_ai_memory",
         params={"conversation_id": f"eq.{conversation_id}", "select": "*", "limit": 1},
@@ -450,14 +479,51 @@ async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -
     prev_rows = prev_res.json() if prev_res.status_code == 200 else []
     previous = prev_rows[0] if isinstance(prev_rows, list) and prev_rows else {}
 
-    if previous and previous.get("last_message_at") == conversation.get("last_message_at"):
-        analyzed = _parse_datetime(previous.get("analyzed_at"))
-        if analyzed and datetime.now(timezone.utc) - analyzed < timedelta(minutes=50):
-            return
+    # Trava principal: timestamp igual significa zero chamada de IA.
+    if previous and _same_timestamp(previous.get("last_message_at"), conversation.get("last_message_at")):
+        await _refresh_unchanged_without_ai(client, conversation, previous)
+        return False
 
-    transcripts = await _transcribe_pending_audio(client, conversation_id, messages)
-    analysis = await _analyze_with_ai(
-        conversation, contact, agent, messages, transcripts, previous
+    messages_res = await client.get(
+        f"{SUPABASE_URL}/rest/v1/messages",
+        params={
+            "conversation_id": f"eq.{conversation_id}",
+            "is_internal_note": "eq.false",
+            "deleted_at": "is.null",
+            "select": "id,content,type,media_url,is_from_contact,created_at,sender_id",
+            "order": "created_at.desc",
+            "limit": 120,
+        },
+        headers=_headers(),
+    )
+    recent_desc = messages_res.json() if messages_res.status_code == 200 and isinstance(messages_res.json(), list) else []
+    all_messages = list(reversed(recent_desc))
+    if not all_messages:
+        return False
+
+    cursor = _parse_datetime(previous.get("last_message_at")) if previous else None
+    if cursor:
+        new_indexes = [i for i, msg in enumerate(all_messages) if (_parse_datetime(msg.get("created_at")) or cursor) > cursor]
+        if not new_indexes:
+            await _refresh_unchanged_without_ai(client, conversation, previous)
+            return False
+        first_new = new_indexes[0]
+        new_messages = all_messages[first_new:][-MAX_DELTA_MESSAGES:]
+        context_start = max(0, first_new - CONTEXT_MESSAGES)
+        prompt_messages = all_messages[context_start:first_new] + new_messages
+    else:
+        new_messages = all_messages[-MAX_INITIAL_MESSAGES:]
+        prompt_messages = new_messages
+
+    transcripts = await _transcribe_new_audio(client, conversation_id, new_messages)
+    analysis = await _analyze_incremental(
+        conversation,
+        conversation.get("contacts") or {},
+        conversation.get("profiles") or {},
+        all_messages,
+        prompt_messages,
+        transcripts,
+        previous,
     )
     now = datetime.now(timezone.utc).isoformat()
     memory = analysis.get("memory") if isinstance(analysis.get("memory"), dict) else {}
@@ -481,7 +547,7 @@ async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -
         "inactive_minutes": analysis.get("inactive_minutes"),
         "summary": analysis.get("summary") or "",
         "recommended_action": analysis.get("recommended_action"),
-        "next_review_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        "next_review_at": None,
         "memory": memory,
         "raw_analysis": analysis,
         "last_message_at": analysis.get("last_message_at"),
@@ -491,39 +557,33 @@ async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -
     await client.post(
         f"{SUPABASE_URL}/rest/v1/conversation_ai_memory",
         params={"on_conflict": "conversation_id"},
-        headers={
-            **_headers(),
-            "Prefer": "resolution=merge-duplicates,return=representation",
-        },
+        headers={**_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
         json=payload,
     )
 
     contact_id = conversation.get("contact_id")
     if contact_id:
-        customer_payload = {
-            "org_id": conversation.get("org_id") or ORG_ID,
-            "contact_id": contact_id,
-            "summary": analysis.get("summary") or "",
-            "facts": memory.get("facts", []),
-            "preferences": memory.get("preferences", []),
-            "products": memory.get("products", []),
-            "objections": memory.get("objections", []),
-            "promises": memory.get("promises", []),
-            "next_steps": memory.get("next_steps", []),
-            "last_conversation_id": conversation_id,
-            "last_interaction_at": analysis.get("last_message_at"),
-            "generated_at": now,
-            "updated_at": now,
-        }
         await client.post(
             f"{SUPABASE_URL}/rest/v1/customer_ai_memory",
             params={"on_conflict": "org_id,contact_id"},
-            headers={
-                **_headers(),
-                "Prefer": "resolution=merge-duplicates,return=representation",
+            headers={**_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            json={
+                "org_id": conversation.get("org_id") or ORG_ID,
+                "contact_id": contact_id,
+                "summary": analysis.get("summary") or "",
+                "facts": memory.get("facts", []),
+                "preferences": memory.get("preferences", []),
+                "products": memory.get("products", []),
+                "objections": memory.get("objections", []),
+                "promises": memory.get("promises", []),
+                "next_steps": memory.get("next_steps", []),
+                "last_conversation_id": conversation_id,
+                "last_interaction_at": analysis.get("last_message_at"),
+                "generated_at": now,
+                "updated_at": now,
             },
-            json=customer_payload,
         )
+    return bool(analysis.get("usage", {}).get("used_ai"))
 
 
 async def run_crm_memory_cycle() -> None:
@@ -531,7 +591,13 @@ async def run_crm_memory_cycle() -> None:
         logger.warning("[CRM MEMORY] Supabase nao configurado.")
         return
 
-    logger.info("[CRM MEMORY] Iniciando ciclo de analise recorrente.")
+    logger.info(
+        "[CRM MEMORY] Ciclo incremental iniciado. Custo mensal estimado: R$ %.2f / R$ %.2f",
+        _monthly_usage_brl(),
+        MONTHLY_BUDGET_BRL,
+    )
+    analyzed = 0
+    skipped = 0
     async with httpx.AsyncClient(timeout=30.0) as client:
         conv_res = await client.get(
             f"{SUPABASE_URL}/rest/v1/conversations",
@@ -539,30 +605,37 @@ async def run_crm_memory_cycle() -> None:
                 "org_id": f"eq.{ORG_ID}",
                 "status": "eq.open",
                 "select": "id,org_id,contact_id,agent_id,status,last_message,last_message_at,created_at,whatsapp_phone,whatsapp_instance,contacts(id,name,company,phone,email,address_city,address_state),profiles(id,name,email)",
-                "order": "last_message_at.desc.nullslast",
-                "limit": 200,
+                "order": "last_message_at.asc.nullslast",
+                "limit": 500,
             },
             headers=_headers(),
         )
         if conv_res.status_code != 200:
-            logger.error(
-                "[CRM MEMORY] Falha ao buscar conversas: %s %s",
-                conv_res.status_code,
-                conv_res.text[:300],
-            )
+            logger.error("[CRM MEMORY] Falha ao buscar conversas: %s %s", conv_res.status_code, conv_res.text[:300])
             return
 
         conversations = conv_res.json() if isinstance(conv_res.json(), list) else []
         for conversation in conversations:
+            if analyzed >= MAX_ANALYSES_PER_CYCLE:
+                logger.warning("[CRM MEMORY] Limite de %s analises no ciclo atingido.", MAX_ANALYSES_PER_CYCLE)
+                break
+            if not _budget_available():
+                break
             try:
-                await _process_conversation(client, conversation)
+                used_ai = await _process_conversation(client, conversation)
+                if used_ai:
+                    analyzed += 1
+                else:
+                    skipped += 1
             except Exception as exc:
-                logger.exception(
-                    "[CRM MEMORY] Erro na conversa %s: %s",
-                    conversation.get("id"),
-                    exc,
-                )
-    logger.info("[CRM MEMORY] Ciclo finalizado.")
+                logger.exception("[CRM MEMORY] Erro na conversa %s: %s", conversation.get("id"), exc)
+
+    logger.info(
+        "[CRM MEMORY] Ciclo finalizado: %s analisadas com IA, %s ignoradas/atualizadas sem IA. Custo mensal: R$ %.2f.",
+        analyzed,
+        skipped,
+        _monthly_usage_brl(),
+    )
 
 
 async def _loop() -> None:
@@ -583,4 +656,4 @@ def start_crm_memory_service() -> None:
     if crm_memory_task and not crm_memory_task.done():
         return
     crm_memory_task = asyncio.create_task(_loop())
-    logger.info("[CRM MEMORY] Servico iniciado.")
+    logger.info("[CRM MEMORY] Servico incremental iniciado.")
