@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Form, Request, BackgroundTasks, Response
+from fastapi import APIRouter, Form, Request, BackgroundTasks, Response, HTTPException
 from twilio.twiml.messaging_response import MessagingResponse
 from app.services.twilio_client import twilio_service
 from app.services.openai_client import process_message_with_assistant, create_thread, transcribe_audio, get_typing_delay
@@ -9,18 +9,25 @@ from app.services.followup_service import resetar_followup
 from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
 from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently
 from app.models.database import SessionLocal, Lead, MediaSent, Conversation, LeadState
+from app.config import get_settings
 import logging
 import asyncio
+import base64
 import re
 from typing import Optional
+from urllib.parse import urlparse
+
+import httpx
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+settings = get_settings()
 
 # ---------------------------------------------------------------------------
 # Proteção contra reentrega duplicada do Twilio
 # ---------------------------------------------------------------------------
 _processed_sids: set = set()
+
 
 def _is_duplicate(message_sid: str) -> bool:
     if message_sid in _processed_sids:
@@ -38,12 +45,12 @@ def _crm_media_type(content_type: Optional[str]) -> str:
         return "audio"
     if mime == "image/gif":
         return "gif"
+    if "sticker" in mime or mime == "image/webp":
+        return "sticker"
     if mime.startswith("image/"):
         return "image"
     if mime.startswith("video/"):
         return "video"
-    if "sticker" in mime or mime in {"image/webp"}:
-        return "sticker"
     return "document"
 
 
@@ -61,36 +68,94 @@ def _crm_media_label(msg_type: str, body: Optional[str] = None) -> str:
     return f"{label} {caption}".strip()
 
 
+def _encode_twilio_media_url(media_url: str) -> str:
+    """Codifica a URL privada da Twilio para uso no proxy do backend."""
+    return base64.urlsafe_b64encode(media_url.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_twilio_media_url(encoded_url: str) -> str:
+    padding = "=" * (-len(encoded_url) % 4)
+    try:
+        return base64.urlsafe_b64decode(encoded_url + padding).decode("utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="URL de mídia inválida") from exc
+
+
+def _build_media_proxy_url(public_base_url: str, media_url: str) -> str:
+    encoded = _encode_twilio_media_url(media_url)
+    return f"{public_base_url.rstrip('/')}/twilio-media/{encoded}"
+
+
+@router.get("/twilio-media/{encoded_url}")
+async def twilio_media_proxy(encoded_url: str):
+    """Entrega mídias privadas da Twilio ao CRM usando autenticação no backend.
+
+    As credenciais nunca são expostas ao navegador. O endpoint aceita somente
+    URLs oficiais da Twilio e repassa o tipo correto do arquivo, permitindo
+    tocar áudio, abrir imagem/vídeo/GIF e baixar documentos.
+    """
+    media_url = _decode_twilio_media_url(encoded_url)
+    parsed = urlparse(media_url)
+    hostname = (parsed.hostname or "").lower()
+
+    if parsed.scheme != "https" or hostname not in {
+        "api.twilio.com",
+        "media.twiliocdn.com",
+    }:
+        raise HTTPException(status_code=400, detail="Origem de mídia não permitida")
+
+    account_sid = settings.TWILIO_ACCOUNT_SID
+    auth_token = settings.TWILIO_AUTH_TOKEN
+    if not account_sid or not auth_token or account_sid == "stub" or auth_token == "stub":
+        logger.error("[MÍDIA] Credenciais Twilio ausentes no backend")
+        raise HTTPException(status_code=503, detail="Mídia temporariamente indisponível")
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=45.0) as client:
+            result = await client.get(media_url, auth=(account_sid, auth_token))
+            result.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error("[MÍDIA] Twilio respondeu %s ao buscar arquivo", exc.response.status_code)
+        raise HTTPException(status_code=502, detail="Não foi possível obter a mídia") from exc
+    except Exception as exc:
+        logger.error("[MÍDIA] Falha ao buscar arquivo na Twilio: %s", exc)
+        raise HTTPException(status_code=502, detail="Não foi possível obter a mídia") from exc
+
+    content_type = (result.headers.get("content-type") or "application/octet-stream").split(";", 1)[0]
+    headers = {
+        "Cache-Control": "private, max-age=3600",
+        "Content-Disposition": result.headers.get("content-disposition", "inline"),
+        "X-Content-Type-Options": "nosniff",
+    }
+    return Response(content=result.content, media_type=content_type, headers=headers)
+
+
 async def _mirror_inbound_media(
     phone: str,
     body: Optional[str],
     media_items: list[tuple[str, str]],
     message_sid: Optional[str],
+    public_base_url: str,
 ) -> None:
-    """Espelha toda mídia recebida no Inbox, sem depender da resposta da IA.
-
-    O Twilio pode enviar mais de um MediaUrlN na mesma mensagem. Cada arquivo
-    vira uma linha própria no CRM para preservar URL e tipo corretamente.
-    """
+    """Espelha toda mídia recebida no Inbox usando uma URL acessível pelo CRM."""
     for index, (media_url, content_type) in enumerate(media_items):
         msg_type = _crm_media_type(content_type)
         content = _crm_media_label(msg_type, body if index == 0 else None)
         whatsapp_id = f"{message_sid}:{index}" if message_sid else None
+        proxy_url = _build_media_proxy_url(public_base_url, media_url)
+
         await log_message_to_crm(
             phone,
             content,
             is_from_contact=True,
             msg_type=msg_type,
-            media_url=media_url,
+            media_url=proxy_url,
             whatsapp_id=whatsapp_id,
         )
 
 
 def find_all_media_for_text(text: str) -> list:
-    """
-    Retorna TODOS os produtos encontrados no texto, sem parar no primeiro.
-    Retorna lista de (product_key, media_dict).
-    """
+    """Retorna todos os produtos encontrados no texto."""
     if not text:
         return []
     text_lower = text.lower()
@@ -100,7 +165,6 @@ def find_all_media_for_text(text: str) -> list:
         pattern = r"\b" + re.escape(key) + r"\b"
         if re.search(pattern, text_lower):
             media = MEDIA_CATALOG[key]
-            # Usa a URL do vídeo como identificador único do produto
             product_id = media.get("video") or media.get("image")
             if product_id not in found:
                 found[product_id] = (key, media)
@@ -125,8 +189,6 @@ async def twilio_webhook(
     phone = From.replace("whatsapp:", "")
     print(f"\n>>> RECEBIDO DE: {From} | SID: {MessageSid}")
 
-    # Lê todas as mídias MediaUrl0..N. O código anterior só considerava áudio
-    # em MediaUrl0 e descartava imagem, vídeo, GIF, figurinha e documentos.
     form = await request.form()
     try:
         num_media = int(form.get("NumMedia") or (1 if MediaUrl0 else 0))
@@ -140,26 +202,21 @@ async def twilio_webhook(
         if media_url:
             media_items.append((str(media_url), str(content_type)))
 
-    # ── Pesquisa de satisfação: intercepta nota 0-5 antes de qualquer
-    # outra coisa. Se for resposta válida de uma pesquisa pendente,
-    # encerra aqui — não reseta follow-up, não vai pro Bruno/IA, não
-    # aparece na conversa normal (fica só no dashboard de satisfação).
     if Body and not media_items and await verificar_resposta_satisfacao(phone, Body):
         resp = MessagingResponse()
         return Response(content=str(resp), media_type="application/xml")
 
     if media_items:
         resetar_followup(phone)
+        public_base_url = str(request.base_url).rstrip("/")
 
-        # Todas as mídias são espelhadas imediatamente no CRM, inclusive em
-        # handoff. O processamento do Bruno continua separado para não gerar
-        # duplicidade na Inbox.
         background_tasks.add_task(
             _mirror_inbound_media,
             phone,
             Body,
             media_items,
             MessageSid,
+            public_base_url,
         )
 
         first_url, first_content_type = media_items[0]
@@ -173,8 +230,6 @@ async def twilio_webhook(
                 True,
             )
         elif Body:
-            # Legenda da mídia ainda pode ser analisada pelo Bruno, mas não é
-            # espelhada uma segunda vez como mensagem de texto.
             background_tasks.add_task(
                 handle_async_response,
                 phone,
@@ -206,7 +261,6 @@ async def handle_async_response(
     print(f"\n>>> INICIANDO PROCESSAMENTO PARA: {phone}")
     db = SessionLocal()
     try:
-        # ── Trava de handoff ────────────────────────────────────────────
         lead_state = db.query(LeadState).filter(LeadState.phone == phone).first()
         if lead_state and lead_state.stage == "closed":
             logger.info(f"[HANDOFF] Lead de {phone} ja foi entregue -- Bruno nao responde mais. So espelhando pro CRM.")
@@ -252,9 +306,6 @@ async def handle_async_response(
             logger.warning(f"[WEBHOOK] Mensagem vazia para {phone}. Abortando.")
             return
 
-        # Só cria uma nova mensagem textual quando a mídia ainda não foi
-        # espelhada. Em áudio já espelhado, a transcrição fica para a IA e a
-        # linha original de mídia permanece única no CRM.
         if not already_mirrored:
             asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
 
@@ -272,7 +323,6 @@ async def handle_async_response(
             asyncio.create_task(log_message_to_crm(phone, chunk, is_from_contact=False))
             first_message = False
 
-        # ── Envio de mídia — suporte a múltiplos produtos ─────────────────
         texto_combinado = (user_message or "") + " " + " ".join(response_chunks)
         resultados = find_all_media_for_text(texto_combinado)
 
@@ -293,7 +343,7 @@ async def handle_async_response(
                 for product_key, media in resultados:
                     ja_enviou = db_media.query(MediaSent).filter(
                         MediaSent.phone == phone,
-                        MediaSent.product_key == product_key
+                        MediaSent.product_key == product_key,
                     ).first()
 
                     if not ja_enviou:
