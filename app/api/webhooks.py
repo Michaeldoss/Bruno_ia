@@ -31,6 +31,61 @@ def _is_duplicate(message_sid: str) -> bool:
     return False
 
 
+def _crm_media_type(content_type: Optional[str]) -> str:
+    """Converte o MIME recebido do Twilio para o tipo usado pelo CRM."""
+    mime = (content_type or "").lower().split(";", 1)[0].strip()
+    if mime.startswith("audio/"):
+        return "audio"
+    if mime == "image/gif":
+        return "gif"
+    if mime.startswith("image/"):
+        return "image"
+    if mime.startswith("video/"):
+        return "video"
+    if "sticker" in mime or mime in {"image/webp"}:
+        return "sticker"
+    return "document"
+
+
+def _crm_media_label(msg_type: str, body: Optional[str] = None) -> str:
+    caption = (body or "").strip()
+    labels = {
+        "audio": "[ÁUDIO]",
+        "image": "[IMAGEM]",
+        "gif": "[GIF]",
+        "video": "[VÍDEO]",
+        "sticker": "[FIGURINHA]",
+        "document": "[ARQUIVO]",
+    }
+    label = labels.get(msg_type, "[MÍDIA]")
+    return f"{label} {caption}".strip()
+
+
+async def _mirror_inbound_media(
+    phone: str,
+    body: Optional[str],
+    media_items: list[tuple[str, str]],
+    message_sid: Optional[str],
+) -> None:
+    """Espelha toda mídia recebida no Inbox, sem depender da resposta da IA.
+
+    O Twilio pode enviar mais de um MediaUrlN na mesma mensagem. Cada arquivo
+    vira uma linha própria no CRM para preservar URL e tipo corretamente.
+    """
+    for index, (media_url, content_type) in enumerate(media_items):
+        msg_type = _crm_media_type(content_type)
+        content = _crm_media_label(msg_type, body if index == 0 else None)
+        whatsapp_id = f"{message_sid}:{index}" if message_sid else None
+        await log_message_to_crm(
+            phone,
+            content,
+            is_from_contact=True,
+            msg_type=msg_type,
+            media_url=media_url,
+            whatsapp_id=whatsapp_id,
+        )
+
+
 def find_all_media_for_text(text: str) -> list:
     """
     Retorna TODOS os produtos encontrados no texto, sem parar no primeiro.
@@ -70,17 +125,64 @@ async def twilio_webhook(
     phone = From.replace("whatsapp:", "")
     print(f"\n>>> RECEBIDO DE: {From} | SID: {MessageSid}")
 
+    # Lê todas as mídias MediaUrl0..N. O código anterior só considerava áudio
+    # em MediaUrl0 e descartava imagem, vídeo, GIF, figurinha e documentos.
+    form = await request.form()
+    try:
+        num_media = int(form.get("NumMedia") or (1 if MediaUrl0 else 0))
+    except (TypeError, ValueError):
+        num_media = 1 if MediaUrl0 else 0
+
+    media_items: list[tuple[str, str]] = []
+    for index in range(max(0, num_media)):
+        media_url = form.get(f"MediaUrl{index}")
+        content_type = form.get(f"MediaContentType{index}") or "application/octet-stream"
+        if media_url:
+            media_items.append((str(media_url), str(content_type)))
+
     # ── Pesquisa de satisfação: intercepta nota 0-5 antes de qualquer
     # outra coisa. Se for resposta válida de uma pesquisa pendente,
     # encerra aqui — não reseta follow-up, não vai pro Bruno/IA, não
     # aparece na conversa normal (fica só no dashboard de satisfação).
-    if Body and await verificar_resposta_satisfacao(phone, Body):
+    if Body and not media_items and await verificar_resposta_satisfacao(phone, Body):
         resp = MessagingResponse()
         return Response(content=str(resp), media_type="application/xml")
 
-    if MediaUrl0 and MediaContentType0 and "audio" in MediaContentType0:
+    if media_items:
         resetar_followup(phone)
-        background_tasks.add_task(handle_async_response, phone, None, MediaUrl0, MediaContentType0)
+
+        # Todas as mídias são espelhadas imediatamente no CRM, inclusive em
+        # handoff. O processamento do Bruno continua separado para não gerar
+        # duplicidade na Inbox.
+        background_tasks.add_task(
+            _mirror_inbound_media,
+            phone,
+            Body,
+            media_items,
+            MessageSid,
+        )
+
+        first_url, first_content_type = media_items[0]
+        if _crm_media_type(first_content_type) == "audio":
+            background_tasks.add_task(
+                handle_async_response,
+                phone,
+                None,
+                first_url,
+                first_content_type,
+                True,
+            )
+        elif Body:
+            # Legenda da mídia ainda pode ser analisada pelo Bruno, mas não é
+            # espelhada uma segunda vez como mensagem de texto.
+            background_tasks.add_task(
+                handle_async_response,
+                phone,
+                Body,
+                None,
+                None,
+                True,
+            )
     elif Body:
         resetar_followup(phone)
         background_tasks.add_task(message_buffer.add_message, phone, Body, process_deferred_message)
@@ -98,53 +200,33 @@ async def handle_async_response(
     phone: str,
     user_message: Optional[str],
     audio_url: Optional[str],
-    content_type: Optional[str]
+    content_type: Optional[str],
+    already_mirrored: bool = False,
 ):
     print(f"\n>>> INICIANDO PROCESSAMENTO PARA: {phone}")
     db = SessionLocal()
     try:
         # ── Trava de handoff ────────────────────────────────────────────
-        # Uma vez que o lead foi entregue (pipeline ou vendedor -- stage
-        # "closed", setado no fechamento forte em openai_client.py), o
-        # Bruno NUNCA MAIS fala com esse numero: nao responde, nao manda
-        # midia, nao reabre followup. A partir daqui quem atende e humano,
-        # pelo numero do agente -- o Bruno so continua espelhando a
-        # mensagem recebida pro Inbox do CRM (pra o agente ver o que o
-        # cliente mandou), e para por ai.
         lead_state = db.query(LeadState).filter(LeadState.phone == phone).first()
         if lead_state and lead_state.stage == "closed":
             logger.info(f"[HANDOFF] Lead de {phone} ja foi entregue -- Bruno nao responde mais. So espelhando pro CRM.")
-            if user_message:
-                asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
-            elif audio_url and content_type and "audio" in content_type:
-                transcription = await transcribe_audio(audio_url)
-                if transcription:
-                    asyncio.create_task(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
+            if not already_mirrored:
+                if user_message:
+                    asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
+                elif audio_url and content_type and "audio" in content_type:
+                    transcription = await transcribe_audio(audio_url)
+                    if transcription:
+                        asyncio.create_task(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
             return
 
-        # ── Trava de handoff (parte 2 -- humano assumiu na marra) ────────
-        # A trava acima (stage == "closed") so cobre quando o PROPRIO
-        # Bruno decidiu fechar (despedida forte). Ela nao cobre: (a)
-        # "handoff fraco" (Bruno so retem o lead, ex: "vou verificar com
-        # a equipe tecnica" -- stage continua active de proposito, pra
-        # nao perder o lead se ninguem mais aparecer) e (b) um vendedor
-        # ou o Michael assumirem manualmente pelo WhatsApp/CRM sem passar
-        # pelo Bruno. Em ambos os casos o Bruno nao tinha como saber e
-        # respondia por cima -- foi o que aconteceu com a Jucania: David
-        # ja estava atendendo, o Bruno voltou a falar (e ainda se
-        # apresentou como "Michael") na proxima mensagem dela.
-        #
-        # Fix: antes de chamar a IA, pergunta pro CRM se algum humano
-        # (qualquer instancia que nao seja 'bruno-ia') respondeu esse
-        # telefone nas ultimas 12h. Se sim, Bruno so espelha e sai --
-        # nao fala, nao manda midia, nao reabre nada.
         if await human_active_recently(phone):
-            if user_message:
-                asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
-            elif audio_url and content_type and "audio" in content_type:
-                transcription = await transcribe_audio(audio_url)
-                if transcription:
-                    asyncio.create_task(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
+            if not already_mirrored:
+                if user_message:
+                    asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
+                elif audio_url and content_type and "audio" in content_type:
+                    transcription = await transcribe_audio(audio_url)
+                    if transcription:
+                        asyncio.create_task(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
             return
 
         lead = db.query(Lead).filter(Lead.phone == phone).first()
@@ -170,10 +252,11 @@ async def handle_async_response(
             logger.warning(f"[WEBHOOK] Mensagem vazia para {phone}. Abortando.")
             return
 
-        # Espelha a mensagem do cliente pro Inbox do CRM em tempo real.
-        # asyncio.create_task (nao await direto) pra nao atrasar a
-        # resposta do Bruno esperando o CRM responder.
-        asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
+        # Só cria uma nova mensagem textual quando a mídia ainda não foi
+        # espelhada. Em áudio já espelhado, a transcrição fica para a IA e a
+        # linha original de mídia permanece única no CRM.
+        if not already_mirrored:
+            asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
 
         logger.info(f"[WEBHOOK] Consultando IA para {phone}...")
         response_chunks = await process_message_with_assistant(thread_id, user_message)
@@ -190,11 +273,9 @@ async def handle_async_response(
             first_message = False
 
         # ── Envio de mídia — suporte a múltiplos produtos ─────────────────
-        # 1. Busca na mensagem atual (cliente + resposta Bruno)
         texto_combinado = (user_message or "") + " " + " ".join(response_chunks)
         resultados = find_all_media_for_text(texto_combinado)
 
-        # 2. Se não achou nada, busca no histórico recente das últimas 10 mensagens
         if not resultados:
             ultimas = (
                 db.query(Conversation)
@@ -206,7 +287,6 @@ async def handle_async_response(
             historico_texto = " ".join(m.content for m in ultimas if m.content)
             resultados = find_all_media_for_text(historico_texto)
 
-        # 3. Envia mídia de cada produto encontrado — apenas os ainda não enviados
         if resultados:
             db_media = SessionLocal()
             try:
@@ -255,17 +335,6 @@ async def trigger_finance_collection(background_tasks: BackgroundTasks):
 
 @router.post("/satisfacao/trigger")
 async def trigger_satisfacao(horas: int = 3):
-    """
-    Roda manualmente uma verificação de OS finalizadas + envio de pesquisa,
-    sem esperar o loop de 10 min. Uso: teste manual.
-
-    Parâmetro opcional ?horas=N alarga a janela de "finalizada recentemente"
-    pra testes (ex: ?horas=72 pega qualquer OS finalizada nos últimos 3 dias).
-    Em produção o loop automático sempre usa o padrão (3h).
-
-    Roda de forma síncrona (não em background) pra você ver o resultado
-    direto na resposta, incluindo qualquer erro.
-    """
     logger.info(f"[SATISFACAO] Disparo manual solicitado (janela={horas}h).")
     try:
         await _tick_satisfacao(horas_janela=horas)
