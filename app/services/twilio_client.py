@@ -1,95 +1,106 @@
+import asyncio
 import logging
+from typing import Optional
+
+from twilio.base.exceptions import TwilioRestException
 from twilio.rest import Client
+
 from app.config import get_settings
 from app.services.usage_tracker import registrar_uso_twilio
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
+_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
+
+
+def _normalize_e164(raw: str) -> str:
+    digits = "".join(c for c in str(raw or "") if c.isdigit())
+    if not digits:
+        raise ValueError("Telefone vazio ou invalido")
+    if not digits.startswith("55") and len(digits) in (10, 11):
+        digits = "55" + digits
+    if len(digits) < 12 or len(digits) > 13:
+        raise ValueError(f"Telefone fora do padrao E.164 brasileiro: {raw}")
+    return "+" + digits
+
+
 class TwilioClient:
     def __init__(self):
-        # Allow stub bypass for local dev without keys
         if settings.TWILIO_ACCOUNT_SID != "stub" and settings.TWILIO_AUTH_TOKEN != "stub":
             self.client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
         else:
             self.client = None
 
+    async def _create_message_with_retry(self, *, attempts: int = 4, **params):
+        last_error: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(self.client.messages.create, **params),
+                    timeout=20.0,
+                )
+            except asyncio.TimeoutError as exc:
+                last_error = exc
+                retryable = True
+                status = "timeout"
+            except TwilioRestException as exc:
+                last_error = exc
+                status = exc.status
+                retryable = exc.status in _RETRYABLE_STATUS
+            except Exception as exc:
+                last_error = exc
+                status = getattr(exc, "status", None)
+                retryable = status in _RETRYABLE_STATUS
+
+            logger.warning(
+                "Twilio falhou na tentativa %s/%s (status=%s): %s",
+                attempt,
+                attempts,
+                status,
+                last_error,
+            )
+            if not retryable or attempt >= attempts:
+                break
+            await asyncio.sleep(min(8.0, 1.5 * (2 ** (attempt - 1))))
+
+        raise RuntimeError(f"Falha definitiva ao enviar pelo Twilio: {last_error}") from last_error
+
     async def send_whatsapp_message(self, to: str, body: str = "", media_url: str = None):
         if not self.client:
-            logger.info(f"[STUB] enviando msg WhatsApp para {to}: {body} (Media: {media_url})")
-            return
+            logger.info("[STUB] enviando msg WhatsApp para %s: %s (Media: %s)", to, body, media_url)
+            return "stub"
 
-        try:
-            # Padrão oficial exigido pelo Meta WhatsApp (+E.164)
-            from_phone = f"whatsapp:{settings.TWILIO_PHONE_NUMBER}"
-            if not from_phone.startswith("whatsapp:+"):
-                from_phone = from_phone.replace("whatsapp:", "whatsapp:+")
+        from_phone = "whatsapp:" + _normalize_e164(settings.TWILIO_PHONE_NUMBER)
+        to_phone = "whatsapp:" + _normalize_e164(to)
 
-            to_phone = f"whatsapp:{to}"
-            if not to_phone.startswith("whatsapp:+"):
-                to_phone = to_phone.replace("whatsapp:", "whatsapp:+")
+        params = {"from_": from_phone, "body": body or "", "to": to_phone}
+        if media_url:
+            params["media_url"] = [media_url]
 
-            logger.error(f">>> DEBUG TWILIO: Enviando de [{from_phone}] para [{to_phone}]")
-
-            params = {
-                "from_": from_phone,
-                "body": body,
-                "to": to_phone
-            }
-            if media_url:
-                params["media_url"] = [media_url]
-
-            import asyncio
-            message = await asyncio.to_thread(self.client.messages.create, **params)
-            logger.info(f"Mensagem enviada com sucesso: SID {message.sid}")
-
-            registrar_uso_twilio(agente="bruno", quantidade_mensagens=1)
-
-            return message.sid
-        except Exception as e:
-            logger.error(f"Erro ao enviar mensagem via Twilio: {e}")
+        message = await self._create_message_with_retry(**params)
+        logger.info("Mensagem Twilio enviada: SID %s para %s", message.sid, to_phone)
+        registrar_uso_twilio(agente="bruno", quantidade_mensagens=1)
+        return message.sid
 
     async def send_whatsapp_template_message(self, to: str, content_sid: str, content_variables: dict):
-        """
-        Envia mensagem via Template (Content API) aprovado pela Meta.
-        OBRIGATÓRIO pra qualquer mensagem business-iniciada fora da janela
-        de 24h de atendimento (erro 63016: "Outside messaging window").
-        Usado pela Pesquisa de Satisfação, que sempre é fora da janela
-        (o cliente não está no meio de uma conversa quando a OS finaliza).
-
-        content_variables: dict tipo {"1": "3519"} pras variáveis {{1}} etc.
-        """
         if not self.client:
-            logger.info(f"[STUB] enviando template WhatsApp para {to}: {content_sid} vars={content_variables}")
-            return
+            logger.info("[STUB] enviando template WhatsApp para %s: %s vars=%s", to, content_sid, content_variables)
+            return "stub"
 
-        try:
-            from_phone = f"whatsapp:{settings.TWILIO_PHONE_NUMBER}"
-            if not from_phone.startswith("whatsapp:+"):
-                from_phone = from_phone.replace("whatsapp:", "whatsapp:+")
+        import json
 
-            to_phone = f"whatsapp:{to}"
-            if not to_phone.startswith("whatsapp:+"):
-                to_phone = to_phone.replace("whatsapp:", "whatsapp:+")
+        from_phone = "whatsapp:" + _normalize_e164(settings.TWILIO_PHONE_NUMBER)
+        to_phone = "whatsapp:" + _normalize_e164(to)
+        message = await self._create_message_with_retry(
+            from_=from_phone,
+            to=to_phone,
+            content_sid=content_sid,
+            content_variables=json.dumps(content_variables),
+        )
+        logger.info("Template Twilio enviado: SID %s para %s", message.sid, to_phone)
+        registrar_uso_twilio(agente="bruno", quantidade_mensagens=1)
+        return message.sid
 
-            logger.error(f">>> DEBUG TWILIO TEMPLATE: Enviando de [{from_phone}] para [{to_phone}] template={content_sid}")
-
-            import asyncio
-            import json as _json
-            message = await asyncio.to_thread(
-                self.client.messages.create,
-                from_=from_phone,
-                to=to_phone,
-                content_sid=content_sid,
-                content_variables=_json.dumps(content_variables),
-            )
-            logger.info(f"Template enviado com sucesso: SID {message.sid}")
-
-            registrar_uso_twilio(agente="bruno", quantidade_mensagens=1)
-
-            return message.sid
-        except Exception as e:
-            logger.error(f"Erro ao enviar template via Twilio: {e}")
-            raise
 
 twilio_service = TwilioClient()

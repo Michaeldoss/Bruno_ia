@@ -1,21 +1,125 @@
-import httpx
+import asyncio
 import logging
+import re
 from typing import Optional
+
+import httpx
+
 from app.config import get_settings
+from app.models.database import LeadState, SessionLocal
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# Endpoint do Doss CRM que recebe leads do Bruno IA. Ver
-# api/leads/create.js no repo do Doss CRM para o contrato completo.
 DOSS_CRM_URL = getattr(settings, "DOSS_CRM_LEADS_URL", "https://doss-crm.vercel.app/api/leads/create")
 DOSS_CRM_KEY = getattr(settings, "BRUNO_API_KEY", None)
+_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
+_VALID_FINAL_HANDOFF = {"sent_and_transferred", "already_assigned"}
 
 if not DOSS_CRM_KEY:
     logger.critical(
-        "Doss CRM: BRUNO_API_KEY nao configurada no .env do Bruno. "
-        "escalate_to_human vai falhar ate isso ser corrigido."
+        "Doss CRM: BRUNO_API_KEY nao configurada no ambiente do Bruno. "
+        "A entrega de leads ao CRM permanecera bloqueada."
     )
+
+
+def _clean(value) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_phone(raw: str) -> str:
+    digits = re.sub(r"\D", "", str(raw or ""))
+    if not digits.startswith("55") and len(digits) in (10, 11):
+        digits = "55" + digits
+    return digits
+
+
+def _valid_name(name: str, phone: str) -> bool:
+    clean_name = _clean(name)
+    if len(clean_name) < 2:
+        return False
+    if re.sub(r"\D", "", clean_name) == _normalize_phone(phone):
+        return False
+    if clean_name.isdigit():
+        return False
+    return bool(re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", clean_name))
+
+
+def _failure(finalizado: bool, status: str, message: str, **extra) -> dict:
+    result = {
+        "ok": False,
+        "status": status,
+        "agent_name": None,
+        "agent_phone": None,
+        **extra,
+    }
+    if finalizado:
+        raise RuntimeError(message)
+    return result
+
+
+def _load_attribution(phone: str) -> dict:
+    db = SessionLocal()
+    try:
+        state = db.query(LeadState).filter(LeadState.phone == phone).first()
+        if not state:
+            return {}
+        return {
+            "canal": state.origin_channel,
+            "campanha": state.campaign_name,
+            "conjunto_anuncios": state.adset_name,
+            "anuncio": state.ad_name,
+            "formulario": state.form_name,
+            "utm_source": state.utm_source,
+            "utm_medium": state.utm_medium,
+            "utm_campaign": state.utm_campaign,
+            "utm_content": state.utm_content,
+            "utm_term": state.utm_term,
+            "pagina_origem": state.landing_page,
+            "referrer": state.referrer,
+            "twilio_from": state.twilio_from,
+            "twilio_to": state.twilio_to,
+        }
+    except Exception as exc:
+        logger.warning("Nao foi possivel carregar atribuicao de %s: %s", phone, exc)
+        return {}
+    finally:
+        db.close()
+
+
+async def _post_with_retry(payload: dict, attempts: int = 4) -> httpx.Response:
+    last_error: Optional[Exception] = None
+    timeout = httpx.Timeout(20.0, connect=6.0)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await client.post(
+                    DOSS_CRM_URL,
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-bruno-key": DOSS_CRM_KEY,
+                        "Idempotency-Key": f"bruno:{payload['phone']}:final",
+                    },
+                )
+                if response.status_code not in _RETRYABLE_STATUS:
+                    return response
+                last_error = RuntimeError(f"CRM HTTP {response.status_code}: {response.text[:300]}")
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_error = exc
+
+            logger.warning(
+                "Doss CRM falhou na tentativa %s/%s para %s: %s",
+                attempt,
+                attempts,
+                payload.get("phone"),
+                last_error,
+            )
+            if attempt < attempts:
+                await asyncio.sleep(min(8.0, 1.5 * (2 ** (attempt - 1))))
+
+    raise RuntimeError(f"Falha definitiva ao chamar o Doss CRM: {last_error}") from last_error
 
 
 async def escalate_to_human(
@@ -39,34 +143,55 @@ async def escalate_to_human(
     serasa_fatores: Optional[str] = None,
     finalizado: bool = True,
     email: Optional[str] = None,
-) -> bool:
-    """
-    Envia o lead pro Doss CRM quando Bruno encerra a conversa.
-    Substitui a integracao antiga com o Arcca (arcca_client.py).
+) -> dict:
+    # Regra central: enquanto o Bruno ainda conversa, nada é enviado ao
+    # endpoint de criação de lead. Isso impede card antecipado, rodízio de
+    # vendedor e troca de whatsapp_instance/agent_id durante a qualificação.
+    if not finalizado:
+        logger.info(
+            "Doss CRM: qualificacao em andamento para %s; sem card e sem transferencia",
+            _normalize_phone(phone),
+        )
+        return {
+            "ok": False,
+            "status": "qualification_in_progress",
+            "agent_name": None,
+            "agent_phone": None,
+            "handoff_status": "not_started",
+        }
 
-    O endpoint do lado do Doss CRM cuida de: criar/achar contato,
-    criar conversa, criar card no pipeline em "Novo Lead" com rodizio
-    de agente, salvar resumo/analise Serasa como nota atrelada ao
-    lead, grava a conversa real (mensagens) na Inbox, e grava o
-    resultado do Serasa em campos proprios no CADASTRO DO CONTATO --
-    incluindo agora o VEREDITO de risco (nivel, recomendacao de
-    condicao de pagamento, fatores considerados), nao so score cru.
-    """
     if not DOSS_CRM_KEY:
-        logger.error("Doss CRM: BRUNO_API_KEY nao configurada - abortando escalate_to_human")
-        return False
+        return _failure(True, "missing_key", "Doss CRM: BRUNO_API_KEY ausente")
+
+    phone_clean = _normalize_phone(phone)
+    if len(phone_clean) < 12:
+        return _failure(True, "invalid_phone", f"Telefone invalido para entrega: {phone}")
+
+    if not _valid_name(name, phone_clean):
+        logger.warning("Doss CRM: nome ainda invalido para %s", phone_clean)
+        return _failure(True, "invalid_name", f"Nome invalido para entrega do lead {phone_clean}")
+
+    if not (_clean(produto) or _clean(tecnologia)):
+        return _failure(
+            True,
+            "missing_product",
+            f"Produto ou tecnologia ainda nao identificado para {phone_clean}",
+        )
+
+    attribution = {k: v for k, v in _load_attribution(phone_clean).items() if _clean(v)}
+    origin_value = _clean(attribution.get("canal")) or _clean(origem) or "Bruno IA"
 
     payload = {
-        "phone": phone,
-        "nome": name or phone,
-        "produto": produto,
-        "cidade": cidade,
-        "origem": origem,
-        "valor_estimado": valor_estimado,
-        "tecnologia": tecnologia,
-        "perfil": perfil,
-        "resumo": summary,
-        "serasa_nota": serasa_nota,
+        "phone": phone_clean,
+        "nome": _clean(name),
+        "produto": _clean(produto),
+        "cidade": _clean(cidade),
+        "origem": origin_value,
+        "valor_estimado": valor_estimado if isinstance(valor_estimado, (int, float)) and valor_estimado > 0 else 0,
+        "tecnologia": _clean(tecnologia),
+        "perfil": _clean(perfil),
+        "resumo": _clean(summary),
+        "serasa_nota": _clean(serasa_nota),
         "mensagens": mensagens or [],
         "serasa_cnpj": serasa_cnpj,
         "serasa_score": serasa_score,
@@ -75,53 +200,69 @@ async def escalate_to_human(
         "serasa_nivel": serasa_nivel,
         "serasa_recomendacao": serasa_recomendacao,
         "serasa_fatores": serasa_fatores,
-        # finalizado=True (fechamento real, despedida) -> CRM atribui vendedor
-        # via rodizio e notifica. finalizado=False (handoff fraco, tipo "vou
-        # verificar com a equipe tecnica") -> card nasce retido, sem dono, so
-        # pra nao perder o lead se a conversa esfriar. Ver openai_client.py.
-        "finalizado": finalizado,
-        # E-mail que o Bruno ja capturava no lead_state.email mas nunca
-        # chegava estruturado no CRM -- so ficava dentro do texto solto
-        # do resumo. Agora vira coluna de verdade em contacts.email.
-        "email": email or None,
+        "finalizado": True,
+        "email": _clean(email) or None,
+        **attribution,
     }
 
-    # FIX: era requests.post (SINCRONO/bloqueante) chamado dentro de uma
-    # funcao async -- travava o event loop inteiro do Bruno por ate 10s
-    # (o timeout) toda vez que um lead fechava, congelando TODAS as outras
-    # conversas simultaneas nesse intervalo. Agora usa httpx.AsyncClient,
-    # que e async de verdade e nao bloqueia o loop.
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(
-                DOSS_CRM_URL,
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "x-bruno-key": DOSS_CRM_KEY,
-                },
+        response = await _post_with_retry(payload)
+    except Exception as exc:
+        logger.error("Doss CRM: falha definitiva para %s: %s", phone_clean, exc, exc_info=True)
+        return _failure(True, "transport_error", f"Falha de transporte ao entregar {phone_clean}: {exc}")
+
+    try:
+        data = response.json()
+    except Exception:
+        data = {"raw": response.text[:500]}
+
+    if response.status_code == 200 and data.get("success"):
+        handoff_status = data.get("handoff_status")
+        if handoff_status not in _VALID_FINAL_HANDOFF:
+            logger.error("CRM criou o lead, mas handoff nao concluiu para %s: %s", phone_clean, handoff_status)
+            return _failure(
+                True,
+                "handoff_not_completed",
+                f"Handoff do lead {phone_clean} nao concluido: {handoff_status}",
+                contact_id=data.get("contact_id"),
+                pipeline_lead_id=data.get("pipeline_lead_id"),
+                handoff_status=handoff_status,
             )
-        if r.status_code == 200:
-            data = r.json()
-            logger.info(
-                f"Doss CRM: lead criado - contact_id={data.get('contact_id')} "
-                f"pipeline_lead_id={data.get('pipeline_lead_id')} "
-                f"agente={data.get('assigned_agent_id')}"
-            )
-            return {
-                "ok": True,
-                "agent_name": data.get("assigned_agent_name"),
-                "agent_phone": data.get("assigned_agent_phone"),
-            }
 
-        logger.error(f"Doss CRM: falha ao criar lead - {r.status_code} | {r.text[:300]}")
-        return {"ok": False, "agent_name": None, "agent_phone": None}
+        logger.info(
+            "Doss CRM: lead entregue contact_id=%s pipeline_lead_id=%s agente=%s handoff=%s",
+            data.get("contact_id"),
+            data.get("pipeline_lead_id"),
+            data.get("assigned_agent_id"),
+            handoff_status,
+        )
+        return {
+            "ok": True,
+            "status": data.get("status", "qualified_and_delivered"),
+            "agent_name": data.get("assigned_agent_name"),
+            "agent_phone": data.get("assigned_agent_phone"),
+            "handoff_status": handoff_status,
+            "contact_id": data.get("contact_id"),
+            "pipeline_lead_id": data.get("pipeline_lead_id"),
+        }
 
-    except Exception as e:
-        logger.error(f"Doss CRM escalate_to_human excecao: {e}")
-        return {"ok": False, "agent_name": None, "agent_phone": None}
+    if response.status_code == 202:
+        missing = data.get("missing", [])
+        logger.warning("Doss CRM manteve %s em qualificacao: %s", phone_clean, missing)
+        return _failure(
+            True,
+            "qualifying",
+            f"Lead {phone_clean} ainda incompleto: {missing}",
+            missing=missing,
+        )
+
+    logger.error("Doss CRM recusou lead %s: HTTP %s | %s", phone_clean, response.status_code, str(data)[:500])
+    return _failure(
+        True,
+        "crm_rejected",
+        f"CRM recusou lead {phone_clean}: HTTP {response.status_code}",
+        http_status=response.status_code,
+    )
 
 
-# Alias para compatibilidade com openai_client.py (mesmo nome usado
-# antes com o arcca_client.py, assim nao precisa mexer em quem chama)
 arcca_client = escalate_to_human
