@@ -4,7 +4,7 @@ from app.services.twilio_client import twilio_service
 from app.services.openai_client import process_message_with_assistant, create_thread, transcribe_audio, get_typing_delay
 from app.services.finance_service import finance_service
 from app.services.buffer_service import message_buffer
-from app.core.media_catalog import find_media_key_for_message, MEDIA_CATALOG
+from app.core.media_catalog import MEDIA_CATALOG
 from app.services.followup_service import resetar_followup
 from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
 from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently
@@ -23,9 +23,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 settings = get_settings()
 
-# ---------------------------------------------------------------------------
-# Proteção contra reentrega duplicada do Twilio
-# ---------------------------------------------------------------------------
 _processed_sids: set = set()
 
 
@@ -39,7 +36,6 @@ def _is_duplicate(message_sid: str) -> bool:
 
 
 def _crm_media_type(content_type: Optional[str]) -> str:
-    """Converte o MIME recebido do Twilio para o tipo usado pelo CRM."""
     mime = (content_type or "").lower().split(";", 1)[0].strip()
     if mime.startswith("audio/"):
         return "audio"
@@ -64,12 +60,10 @@ def _crm_media_label(msg_type: str, body: Optional[str] = None) -> str:
         "sticker": "[FIGURINHA]",
         "document": "[ARQUIVO]",
     }
-    label = labels.get(msg_type, "[MÍDIA]")
-    return f"{label} {caption}".strip()
+    return f"{labels.get(msg_type, '[MÍDIA]')} {caption}".strip()
 
 
 def _encode_twilio_media_url(media_url: str) -> str:
-    """Codifica a URL privada da Twilio para uso no proxy do backend."""
     return base64.urlsafe_b64encode(media_url.encode("utf-8")).decode("ascii").rstrip("=")
 
 
@@ -83,25 +77,17 @@ def _decode_twilio_media_url(encoded_url: str) -> str:
 
 def _build_media_proxy_url(public_base_url: str, media_url: str) -> str:
     encoded = _encode_twilio_media_url(media_url)
-    return f"{public_base_url.rstrip('/')}/twilio-media/{encoded}"
+    # O router é registrado em main.py com prefixo /webhooks.
+    return f"{public_base_url.rstrip('/')}/webhooks/twilio-media/{encoded}"
 
 
-@router.get("/twilio-media/{encoded_url}")
-async def twilio_media_proxy(encoded_url: str):
-    """Entrega mídias privadas da Twilio ao CRM usando autenticação no backend.
-
-    As credenciais nunca são expostas ao navegador. O endpoint aceita somente
-    URLs oficiais da Twilio e repassa o tipo correto do arquivo, permitindo
-    tocar áudio, abrir imagem/vídeo/GIF e baixar documentos.
-    """
+@router.get("/twilio-media/{encoded_url}", name="twilio_media_proxy")
+async def twilio_media_proxy(encoded_url: str, request: Request):
     media_url = _decode_twilio_media_url(encoded_url)
     parsed = urlparse(media_url)
     hostname = (parsed.hostname or "").lower()
 
-    if parsed.scheme != "https" or hostname not in {
-        "api.twilio.com",
-        "media.twiliocdn.com",
-    }:
+    if parsed.scheme != "https" or hostname not in {"api.twilio.com", "media.twiliocdn.com"}:
         raise HTTPException(status_code=400, detail="Origem de mídia não permitida")
 
     account_sid = settings.TWILIO_ACCOUNT_SID
@@ -110,9 +96,18 @@ async def twilio_media_proxy(encoded_url: str):
         logger.error("[MÍDIA] Credenciais Twilio ausentes no backend")
         raise HTTPException(status_code=503, detail="Mídia temporariamente indisponível")
 
+    upstream_headers = {}
+    range_header = request.headers.get("range")
+    if range_header:
+        upstream_headers["Range"] = range_header
+
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=45.0) as client:
-            result = await client.get(media_url, auth=(account_sid, auth_token))
+        async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+            result = await client.get(
+                media_url,
+                auth=(account_sid, auth_token),
+                headers=upstream_headers,
+            )
             result.raise_for_status()
     except httpx.HTTPStatusError as exc:
         logger.error("[MÍDIA] Twilio respondeu %s ao buscar arquivo", exc.response.status_code)
@@ -122,12 +117,24 @@ async def twilio_media_proxy(encoded_url: str):
         raise HTTPException(status_code=502, detail="Não foi possível obter a mídia") from exc
 
     content_type = (result.headers.get("content-type") or "application/octet-stream").split(";", 1)[0]
-    headers = {
+    response_headers = {
         "Cache-Control": "private, max-age=3600",
         "Content-Disposition": result.headers.get("content-disposition", "inline"),
         "X-Content-Type-Options": "nosniff",
+        "Access-Control-Allow-Origin": "*",
+        "Accept-Ranges": result.headers.get("accept-ranges", "bytes"),
     }
-    return Response(content=result.content, media_type=content_type, headers=headers)
+    for header_name in ("content-range", "content-length", "etag", "last-modified"):
+        value = result.headers.get(header_name)
+        if value:
+            response_headers["-".join(part.capitalize() for part in header_name.split("-"))] = value
+
+    return Response(
+        content=result.content,
+        status_code=result.status_code,
+        media_type=content_type,
+        headers=response_headers,
+    )
 
 
 async def _mirror_inbound_media(
@@ -137,13 +144,11 @@ async def _mirror_inbound_media(
     message_sid: Optional[str],
     public_base_url: str,
 ) -> None:
-    """Espelha toda mídia recebida no Inbox usando uma URL acessível pelo CRM."""
     for index, (media_url, content_type) in enumerate(media_items):
         msg_type = _crm_media_type(content_type)
         content = _crm_media_label(msg_type, body if index == 0 else None)
         whatsapp_id = f"{message_sid}:{index}" if message_sid else None
         proxy_url = _build_media_proxy_url(public_base_url, media_url)
-
         await log_message_to_crm(
             phone,
             content,
@@ -155,7 +160,6 @@ async def _mirror_inbound_media(
 
 
 def find_all_media_for_text(text: str) -> list:
-    """Retorna todos os produtos encontrados no texto."""
     if not text:
         return []
     text_lower = text.lower()
@@ -183,11 +187,10 @@ async def twilio_webhook(
 ):
     if MessageSid and _is_duplicate(MessageSid):
         logger.warning(f"[WEBHOOK] Mensagem duplicada ignorada: {MessageSid}")
-        resp = MessagingResponse()
-        return Response(content=str(resp), media_type="application/xml")
+        return Response(content=str(MessagingResponse()), media_type="application/xml")
 
     phone = From.replace("whatsapp:", "")
-    print(f"\n>>> RECEBIDO DE: {From} | SID: {MessageSid}")
+    logger.info("[WEBHOOK] Recebido de %s | SID: %s", From, MessageSid)
 
     form = await request.form()
     try:
@@ -203,13 +206,11 @@ async def twilio_webhook(
             media_items.append((str(media_url), str(content_type)))
 
     if Body and not media_items and await verificar_resposta_satisfacao(phone, Body):
-        resp = MessagingResponse()
-        return Response(content=str(resp), media_type="application/xml")
+        return Response(content=str(MessagingResponse()), media_type="application/xml")
 
     if media_items:
         resetar_followup(phone)
         public_base_url = str(request.base_url).rstrip("/")
-
         background_tasks.add_task(
             _mirror_inbound_media,
             phone,
@@ -242,12 +243,11 @@ async def twilio_webhook(
         resetar_followup(phone)
         background_tasks.add_task(message_buffer.add_message, phone, Body, process_deferred_message)
 
-    resp = MessagingResponse()
-    return Response(content=str(resp), media_type="application/xml")
+    return Response(content=str(MessagingResponse()), media_type="application/xml")
 
 
 async def process_deferred_message(phone: str, combined_message: str):
-    logger.info(f"[WEBHOOK] Buffer liberado para {phone}. Processando: {combined_message}")
+    logger.info("[WEBHOOK] Buffer liberado para %s", phone)
     await handle_async_response(phone, combined_message, None, None)
 
 
@@ -258,12 +258,10 @@ async def handle_async_response(
     content_type: Optional[str],
     already_mirrored: bool = False,
 ):
-    print(f"\n>>> INICIANDO PROCESSAMENTO PARA: {phone}")
     db = SessionLocal()
     try:
         lead_state = db.query(LeadState).filter(LeadState.phone == phone).first()
         if lead_state and lead_state.stage == "closed":
-            logger.info(f"[HANDOFF] Lead de {phone} ja foi entregue -- Bruno nao responde mais. So espelhando pro CRM.")
             if not already_mirrored:
                 if user_message:
                     asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
@@ -294,7 +292,6 @@ async def handle_async_response(
         thread_id = lead.thread_id
 
         if audio_url and content_type and "audio" in content_type:
-            logger.info(f"Processando áudio de {phone}...")
             transcription = await transcribe_audio(audio_url)
             if transcription:
                 user_message = f"[ÁUDIO] {transcription}"
@@ -303,22 +300,18 @@ async def handle_async_response(
                 return
 
         if not user_message:
-            logger.warning(f"[WEBHOOK] Mensagem vazia para {phone}. Abortando.")
+            logger.warning("[WEBHOOK] Mensagem vazia para %s", phone)
             return
 
         if not already_mirrored:
             asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
 
-        logger.info(f"[WEBHOOK] Consultando IA para {phone}...")
         response_chunks = await process_message_with_assistant(thread_id, user_message)
-        logger.info(f"[WEBHOOK] IA retornou {len(response_chunks)} chunks para {phone}.")
-
         first_message = True
         for chunk in response_chunks:
             if not first_message:
                 await asyncio.sleep(3.0)
-            delay = get_typing_delay(chunk)
-            await asyncio.sleep(delay)
+            await asyncio.sleep(get_typing_delay(chunk))
             await twilio_service.send_whatsapp_message(phone, chunk)
             asyncio.create_task(log_message_to_crm(phone, chunk, is_from_contact=False))
             first_message = False
@@ -345,33 +338,41 @@ async def handle_async_response(
                         MediaSent.phone == phone,
                         MediaSent.product_key == product_key,
                     ).first()
+                    if ja_enviou:
+                        continue
 
-                    if not ja_enviou:
-                        logger.info(f"[MÍDIA] Enviando '{product_key}' para {phone}")
+                    await asyncio.sleep(2.0)
+                    if media.get("image"):
+                        await twilio_service.send_whatsapp_message(phone, media_url=media["image"])
+                        asyncio.create_task(log_message_to_crm(
+                            phone,
+                            f"[imagem] {product_key}",
+                            is_from_contact=False,
+                            msg_type="image",
+                            media_url=media["image"],
+                        ))
                         await asyncio.sleep(2.0)
 
-                        if media.get("image"):
-                            await twilio_service.send_whatsapp_message(phone, media_url=media["image"])
-                            asyncio.create_task(log_message_to_crm(phone, f"[imagem] {product_key}", is_from_contact=False, msg_type="image", media_url=media["image"]))
-                            await asyncio.sleep(2.0)
+                    if media.get("video"):
+                        await twilio_service.send_whatsapp_message(phone, media_url=media["video"])
+                        asyncio.create_task(log_message_to_crm(
+                            phone,
+                            f"[video] {product_key}",
+                            is_from_contact=False,
+                            msg_type="video",
+                            media_url=media["video"],
+                        ))
+                        await asyncio.sleep(2.0)
 
-                        if media.get("video"):
-                            await twilio_service.send_whatsapp_message(phone, media_url=media["video"])
-                            asyncio.create_task(log_message_to_crm(phone, f"[video] {product_key}", is_from_contact=False, msg_type="video", media_url=media["video"]))
-                            await asyncio.sleep(2.0)
-
-                        db_media.add(MediaSent(phone=phone, product_key=product_key))
-                        db_media.commit()
-                        logger.info(f"[MÍDIA] '{product_key}' registrado no banco para {phone}")
-                    else:
-                        logger.info(f"[MÍDIA] '{product_key}' já enviado para {phone}. Ignorando.")
-            except Exception as e:
-                logger.error(f"[MÍDIA] Erro ao controlar mídia: {e}")
+                    db_media.add(MediaSent(phone=phone, product_key=product_key))
+                    db_media.commit()
+            except Exception as exc:
+                logger.error("[MÍDIA] Erro ao controlar mídia: %s", exc)
             finally:
                 db_media.close()
 
-    except Exception as e:
-        logger.error(f"Erro no processamento para {phone}: {e}", exc_info=True)
+    except Exception as exc:
+        logger.error("Erro no processamento para %s: %s", phone, exc, exc_info=True)
     finally:
         db.close()
 
@@ -385,10 +386,10 @@ async def trigger_finance_collection(background_tasks: BackgroundTasks):
 
 @router.post("/satisfacao/trigger")
 async def trigger_satisfacao(horas: int = 3):
-    logger.info(f"[SATISFACAO] Disparo manual solicitado (janela={horas}h).")
+    logger.info("[SATISFACAO] Disparo manual solicitado (janela=%sh).", horas)
     try:
         await _tick_satisfacao(horas_janela=horas)
         return {"status": "ok", "mensagem": f"Verificação executada (janela={horas}h). Confira os logs do Render pra detalhes."}
-    except Exception as e:
-        logger.error(f"[SATISFACAO] Erro no disparo manual: {e}")
-        return {"status": "erro", "erro": str(e)}
+    except Exception as exc:
+        logger.error("[SATISFACAO] Erro no disparo manual: %s", exc)
+        return {"status": "erro", "erro": str(exc)}
