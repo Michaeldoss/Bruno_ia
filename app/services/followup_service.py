@@ -340,11 +340,10 @@ def resetar_followup(phone: str):
     db = SessionLocal()
     try:
         lead_state = db.query(LeadState).filter(LeadState.phone == phone).first()
-        if lead_state and (lead_state.followup_step or 0) > 0:
+        if lead_state and lead_state.stage in ("closed", "followup_closed"):
             lead_state.followup_step = 0
             lead_state.followup_sent_at = None
-            if lead_state.stage == "followup_closed":
-                lead_state.stage = "active"
+            lead_state.stage = "active"
             db.commit()
     except Exception as exc:
         logger.error("[FOLLOWUP] Erro ao resetar %s: %s", phone, exc)
