@@ -996,6 +996,32 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
             "em breve entraremos em contato",
         ])
 
+        # ── Recusa explícita do cliente (diferente de silêncio) ───────────
+        # A lista de despedida acima só pega a frase forte de qualificação
+        # completa ("passei seus dados pro time comercial"). Ela nunca
+        # disparava quando o cliente respondia um "não, obrigado" claro ou
+        # dizia que o assunto não era o que procurava -- o lead ficava
+        # "active"/"awaiting_cnpj" pra sempre e continuava recebendo
+        # follow-up mesmo depois de uma recusa explícita. "Nunca desistir"
+        # vale pra quem fica em silêncio, não pra quem já respondeu que
+        # não quer -- insistir nesse caso é ignorar a resposta da pessoa.
+        recusa_explicita = any(kw in user_lower for kw in [
+            "no momento não", "por enquanto não", "agora não",
+            "não quero", "não preciso", "não tenho interesse",
+            "não é isso", "não é o que eu", "não vou precisar",
+            "obrigado, não", "obrigada, não", "não, obrigado", "não, obrigada",
+            "não funciona", "não é pra mim",
+        ])
+
+        if recusa_explicita and not despedida_detectada and lead_state.stage not in ("closed",):
+            # Recusa clara não vira card nem aciona handoff pra vendedor --
+            # mandar isso pro agente seria desperdiçar o tempo dele com
+            # alguém que já disse que não quer. Só encerra o ciclo de
+            # follow-up do Bruno; se a pessoa voltar a escrever depois,
+            # resetar_followup() reabre normalmente.
+            lead_state.stage = "closed"
+            db.commit()
+
         if despedida_detectada and lead_state.stage not in ("closed",):
             # card_id: 1 = card criado mas RETIDO (sem dono), 2 = ja entregue
             # a um vendedor. Antes a condicao era "not lead_state.card_id",
