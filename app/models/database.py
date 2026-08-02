@@ -78,6 +78,10 @@ class LeadState(Base):
     # ── Follow-up automático ───────────────────────────────────────────────
     followup_step    = Column(Integer,  default=0)
     followup_sent_at = Column(DateTime, nullable=True)
+    recusas_count     = Column(Integer, default=0)
+    # Conta quantas vezes o cliente recusou explicitamente. Na 1a recusa,
+    # o Bruno tenta contornar com mais argumentacao (nao fecha). Só a
+    # partir da 2a recusa e que transfere pra agente humano + pipeline.
 
     # ── Timestamps ────────────────────────────────────────────────────────
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

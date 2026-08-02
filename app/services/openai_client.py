@@ -352,6 +352,13 @@ OBJEÇÃO DE ORÇAMENTO:
 NUNCA troque tecnologia sem avisar. DTF é DTF. Eco é eco.
 "A entrada no DTF é acessível. Posso simular parcelamento que caiba no seu fluxo."
 
+RECUSA GERAL ("no momento não", "não quero", "não tenho interesse", "não é isso"):
+Na PRIMEIRA vez que isso acontecer na conversa, NÃO aceite como resposta final e NÃO encerre.
+Tente entender o motivo real e ofereça um caminho mais leve antes de desistir: reduzir escopo,
+mandar material pra decidir com calma, ou perguntar o que faria sentido. Só na SEGUNDA recusa
+seguida sobre o mesmo assunto é que se aceita e se encerra com respeito, sem insistir mais.
+PROIBIDO: encerrar com frase passiva já na primeira recusa.
+
 CTAs DISPONÍVEIS:
 - "Quer que eu simule o parcelamento para o seu CNPJ?"
 - "Qual desses modelos se encaixa melhor no seu espaço?"
@@ -1079,13 +1086,21 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         ])
 
         if recusa_explicita and not despedida_detectada and lead_state.stage not in ("closed",):
-            # Recusa clara não vira card nem aciona handoff pra vendedor --
-            # mandar isso pro agente seria desperdiçar o tempo dele com
-            # alguém que já disse que não quer. Só encerra o ciclo de
-            # follow-up do Bruno; se a pessoa voltar a escrever depois,
-            # resetar_followup() reabre normalmente.
-            lead_state.stage = "closed"
+            lead_state.recusas_count = (lead_state.recusas_count or 0) + 1
             db.commit()
+            if lead_state.recusas_count >= 2:
+                # Segunda recusa -- insistir mais uma vez ja seria
+                # forçar a barra. Transfere pra agente humano de verdade
+                # (mesma funcao usada no handoff por silencio), em vez
+                # de so fechar sem ninguem acompanhar.
+                from app.services.followup_service import _transferir_para_agente
+                await _transferir_para_agente(phone)
+                lead_state.stage = "closed"
+                db.commit()
+            # Na 1a recusa nao faz nada aqui -- o Bruno responde
+            # normalmente, com mais argumentacao, seguindo o fluxo
+            # natural da conversa (o prompt principal ja orienta a
+            # contornar objecao antes de desistir).
 
         if despedida_detectada and lead_state.stage not in ("closed",):
             # card_id: 1 = card criado mas RETIDO (sem dono), 2 = ja entregue
