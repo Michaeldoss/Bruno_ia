@@ -31,6 +31,7 @@ from typing import Optional
 import httpx
 
 from app.config import get_settings
+from app.models.database import SessionLocal, CrmSyncQueue
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -359,6 +360,50 @@ async def criar_lead_no_pipeline(
         return False
 
 
+async def _sincronizar_uma_vez(
+    phone_clean: str, content: str, is_from_contact: bool,
+    msg_type: str, media_url: Optional[str], whatsapp_id: Optional[str], nome: Optional[str],
+) -> None:
+    """Uma tentativa de sincronizar com o CRM. Lança exceção se falhar --
+    quem chama decide o que fazer (marcar synced ou deixar pro worker)."""
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        contact_id = await _get_or_create_contact(client, phone_clean, nome)
+        if not contact_id:
+            raise RuntimeError("nao foi possivel obter/criar contact_id")
+        conversation_id, current_unread = await _get_or_create_conversation(client, phone_clean, contact_id)
+        if not conversation_id:
+            raise RuntimeError("nao foi possivel obter/criar conversation_id")
+
+        await client.post(
+            f"{SUPABASE_URL}/rest/v1/messages",
+            headers=_headers(),
+            json={
+                "org_id": ORG_ID,
+                "conversation_id": conversation_id,
+                "content": content[:4000],
+                "is_from_contact": is_from_contact,
+                "type": msg_type,
+                "media_url": media_url,
+                "whatsapp_id": whatsapp_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        patch_body = {
+            "last_message": content[:300],
+            "last_message_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if is_from_contact:
+            patch_body["unread_count"] = current_unread + 1
+
+        await client.patch(
+            f"{SUPABASE_URL}/rest/v1/conversations",
+            params={"id": f"eq.{conversation_id}"},
+            headers=_headers(),
+            json=patch_body,
+        )
+
+
 async def log_message(
     phone: str,
     content: str,
@@ -371,7 +416,14 @@ async def log_message(
     """Espelha uma mensagem (do cliente ou do Bruno) pro Inbox do CRM.
 
     Chamar isso NUNCA deve travar nem atrasar de forma perceptivel o
-    atendimento real via Twilio -- qualquer falha aqui so vira log.
+    atendimento real via Twilio. Mas diferente de antes -- quando uma
+    falha de rede simplesmente fazia a mensagem sumir do CRM pra
+    sempre, sem ninguem saber -- agora toda mensagem grava PRIMEIRO
+    numa fila duravel no banco do proprio Bruno (que ele ja depende de
+    qualquer forma). A tentativa de sincronizar acontece na hora pra
+    a maioria aparecer instantaneamente, mas se falhar, a linha fica
+    pendente e o worker em segundo plano (crm_sync_worker_loop) insiste
+    ate conseguir -- nunca desiste e nunca perde a mensagem de vista.
     """
     if not SUPABASE_KEY or SUPABASE_KEY == "stub":
         return
@@ -380,86 +432,90 @@ async def log_message(
     if not phone_clean or not content:
         return
 
+    db = SessionLocal()
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            contact_id = await _get_or_create_contact(client, phone_clean, nome)
-            if not contact_id:
-                return
-            conversation_id, current_unread = await _get_or_create_conversation(client, phone_clean, contact_id)
-            if not conversation_id:
-                return
-
-            await client.post(
-                f"{SUPABASE_URL}/rest/v1/messages",
-                headers=_headers(),
-                json={
-                    "org_id": ORG_ID,
-                    "conversation_id": conversation_id,
-                    "content": content[:4000],
-                    "is_from_contact": is_from_contact,
-                    "type": msg_type,
-                    "media_url": media_url,
-                    "whatsapp_id": whatsapp_id,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
-
-            patch_body = {
-                "last_message": content[:300],
-                "last_message_at": datetime.now(timezone.utc).isoformat(),
-            }
-            if is_from_contact:
-                patch_body["unread_count"] = current_unread + 1
-
-            await client.patch(
-                f"{SUPABASE_URL}/rest/v1/conversations",
-                params={"id": f"eq.{conversation_id}"},
-                headers=_headers(),
-                json=patch_body,
-            )
+        fila = CrmSyncQueue(
+            phone=phone_clean, content=content[:4000], is_from_contact=is_from_contact,
+            msg_type=msg_type, media_url=media_url, whatsapp_id=whatsapp_id, nome=nome,
+            synced=False,
+        )
+        db.add(fila)
+        db.commit()
+        db.refresh(fila)
     except Exception as e:
-        # De proposito: nunca propaga pro atendimento real. Mas antes
-        # so desistia na primeira falha -- se fosse um timeout de rede
-        # passageiro, a mensagem do cliente sumia do CRM pra sempre,
-        # sem ninguem saber, criando buraco na conversa (alguem olhando
-        # o CRM via achar que o Bruno respondeu algo do nada). Agora
-        # tenta mais uma vez antes de desistir de verdade.
-        logger.error(f"[CRM Inbox] Falha ao espelhar mensagem ({phone}), tentando de novo: {e}")
+        # Se nem isso der certo (banco do proprio Bruno fora do ar),
+        # ai sim nao ha o que fazer -- mas isso e muitissimo mais raro
+        # que uma falha de rede pontual com o Supabase.
+        logger.error(f"[CRM Inbox] Falha ao gravar na fila duravel ({phone}): {e}")
+        db.rollback()
+        return
+    finally:
+        db.close()
+
+    try:
+        await _sincronizar_uma_vez(phone_clean, content, is_from_contact, msg_type, media_url, whatsapp_id, nome)
+        db = SessionLocal()
         try:
-            await asyncio.sleep(2)
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                contact_id = await _get_or_create_contact(client, phone_clean, nome)
-                if not contact_id:
-                    return
-                conversation_id, current_unread = await _get_or_create_conversation(client, phone_clean, contact_id)
-                if not conversation_id:
-                    return
-                await client.post(
-                    f"{SUPABASE_URL}/rest/v1/messages",
-                    headers=_headers(),
-                    json={
-                        "org_id": ORG_ID,
-                        "conversation_id": conversation_id,
-                        "content": content[:4000],
-                        "is_from_contact": is_from_contact,
-                        "type": msg_type,
-                        "media_url": media_url,
-                        "whatsapp_id": whatsapp_id,
-                        "created_at": datetime.now(timezone.utc).isoformat(),
-                    },
+            row = db.query(CrmSyncQueue).filter(CrmSyncQueue.id == fila.id).first()
+            if row:
+                row.synced = True
+                row.synced_at = datetime.utcnow()
+                db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        # Nao desiste aqui -- so loga. A linha fica synced=False na
+        # fila, e o worker em segundo plano vai pegar e tentar de novo
+        # ate conseguir.
+        logger.error(f"[CRM Inbox] Falha ao sincronizar na hora ({phone}), fica na fila pro worker: {e}")
+
+
+crm_sync_worker_task: asyncio.Task = None
+
+
+def start_crm_sync_worker():
+    global crm_sync_worker_task
+    crm_sync_worker_task = asyncio.create_task(crm_sync_worker_loop())
+    logger.info("[CRM Sync Worker] Task iniciada com sucesso.")
+
+
+async def crm_sync_worker_loop():
+    """Roda pra sempre em segundo plano, reprocessando mensagens que
+    falharam a sincronizacao imediata. Nunca desiste de uma mensagem --
+    so avisa o admin se alguma acumular tentativas demais, pra alguem
+    checar manualmente o que esta acontecendo."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                pendentes = (
+                    db.query(CrmSyncQueue)
+                    .filter(CrmSyncQueue.synced == False)  # noqa: E712
+                    .order_by(CrmSyncQueue.created_at.asc())
+                    .limit(50)
+                    .all()
                 )
-                patch_body = {
-                    "last_message": content[:300],
-                    "last_message_at": datetime.now(timezone.utc).isoformat(),
-                }
-                if is_from_contact:
-                    patch_body["unread_count"] = current_unread + 1
-                await client.patch(
-                    f"{SUPABASE_URL}/rest/v1/conversations",
-                    params={"id": f"eq.{conversation_id}"},
-                    headers=_headers(),
-                    json=patch_body,
-                )
-        except Exception as e2:
-            logger.error(f"[CRM Inbox] Falha definitiva ao espelhar mensagem ({phone}) mesmo na 2a tentativa: {e2}")
+                for item in pendentes:
+                    try:
+                        await _sincronizar_uma_vez(
+                            item.phone, item.content, item.is_from_contact,
+                            item.msg_type, item.media_url, item.whatsapp_id, item.nome,
+                        )
+                        item.synced = True
+                        item.synced_at = datetime.utcnow()
+                        db.commit()
+                    except Exception as e:
+                        item.attempts = (item.attempts or 0) + 1
+                        item.last_error = str(e)[:500]
+                        db.commit()
+                        if item.attempts in (20, 50, 100):
+                            logger.error(
+                                f"[CRM Sync Worker] Mensagem id={item.id} phone={item.phone} "
+                                f"ja falhou {item.attempts}x -- precisa de olho humano."
+                            )
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"[CRM Sync Worker] Erro no loop: {e}")
+        await asyncio.sleep(30)
 

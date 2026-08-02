@@ -6,6 +6,7 @@ from app.api.webhooks import router as webhook_router
 from app.services.followup_service import start_followup_service
 from app.services.satisfacao_service import start_satisfacao_service
 from app.services.finance_service import start_cobranca_service
+from app.services.crm_inbox_client import start_crm_sync_worker
 from app.models.database import SessionLocal, Conversation, Lead, LeadState, UsageLog
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -19,6 +20,7 @@ async def lifespan(app: FastAPI):
     start_followup_service()
     start_satisfacao_service()
     start_cobranca_service()
+    start_crm_sync_worker()
     yield
 
 

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker
 from app.config import get_settings
 import datetime
@@ -97,6 +97,34 @@ class MediaSent(Base):
     phone       = Column(String, index=True)
     product_key = Column(String)
     created_at  = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class CrmSyncQueue(Base):
+    """Fila durável de mensagens pendentes de espelhamento no CRM.
+
+    Toda mensagem (do cliente ou do Bruno) grava aqui PRIMEIRO, nesse
+    banco que o Bruno já depende de qualquer forma (praticamente nunca
+    fica fora do ar). A sincronização com o CRM (Supabase) e' tentada
+    na hora, mas se falhar, a linha fica com synced=False e um worker
+    em segundo plano insiste ate conseguir -- nunca desiste, so' avisa
+    se acumular tentativas demais. Isso elimina buraco de conversa no
+    CRM causado por falha transitoria de rede.
+    """
+    __tablename__ = "crm_sync_queue"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    phone           = Column(String, index=True)
+    content         = Column(Text)
+    is_from_contact = Column(Boolean, default=False)
+    msg_type        = Column(String, default="text")
+    media_url       = Column(String, nullable=True)
+    whatsapp_id     = Column(String, nullable=True)
+    nome            = Column(String, nullable=True)
+    synced          = Column(Boolean, default=False, index=True)
+    attempts        = Column(Integer, default=0)
+    last_error      = Column(Text, nullable=True)
+    created_at      = Column(DateTime, default=datetime.datetime.utcnow)
+    synced_at       = Column(DateTime, nullable=True)
 
 
 class UsageLog(Base):
