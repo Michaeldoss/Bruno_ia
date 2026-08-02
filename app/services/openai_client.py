@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.models.database import SessionLocal, Lead, Conversation, LeadState
 from app.services.uniplus_client import uniplus_service
 from app.services.sheets_client import sheets_service
-from app.services.doss_crm_client import arcca_client
+from app.services.doss_crm_client import enviar_lead_crm
 from app.services.twilio_client import twilio_service
 from app.services.crm_inbox_client import (
     log_message as log_message_to_crm,
@@ -1365,7 +1365,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                 # esta aberta, e qualquer falha real cai no except la embaixo
                 # (que ja loga e avisa o cliente) em vez de sumir sem rastro.
                 async def _criar_card():
-                    resultado = await arcca_client(
+                    resultado = await enviar_lead_crm(
                         phone, nome_lead, resumo,
                         produto=produto_lead, cidade=cidade_lead, origem=origem_lead,
                         valor_estimado=valor_estimado, tecnologia=tecnologia_lead,
@@ -1380,13 +1380,16 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                         serasa_fatores=serasa_fatores,
                         email=lead_state.email or None,
                     )
-                    # Card no Doss CRM. O Arcca e o sistema antigo; sem isso
-                    # o lead qualificado nunca chegava ao funil do CRM novo --
-                    # ficava so na Inbox e ninguem trabalhava.
-                    await criar_lead_no_pipeline(
-                        phone, nome=nome_lead, cidade=cidade_lead,
-                        email=lead_state.email or None, resumo=resumo, finalizado=True,
-                    )
+                    # Card no Doss CRM -- so pelo caminho simples se o
+                    # caminho com rodizio de verdade (enviar_lead_crm) falhou.
+                    # Antes rodava sempre incondicional, entao mesmo quando
+                    # o CRM atribuia certinho um vendedor via rodizio, esse
+                    # fallback rodava por cima logo em seguida.
+                    if not resultado.get("ok"):
+                        await criar_lead_no_pipeline(
+                            phone, nome=nome_lead, cidade=cidade_lead,
+                            email=lead_state.email or None, resumo=resumo, finalizado=True,
+                        )
 
                     if resultado.get("ok"):
                         logger.info(f"[ARCCA] Card criado/entregue para {phone}")
@@ -1453,15 +1456,21 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                 "esfrie antes do fechamento.\n\n"
                 "── CONVERSA (ultimas mensagens) ──\n" + "\n".join(historico_soft)
             )
-            resultado_soft = await arcca_client(
+            resultado_soft = await enviar_lead_crm(
                 phone, nome_soft, resumo_soft,
                 cidade=cidade_soft, origem="Bruno IA", finalizado=False,
                 email=lead_state.email or None,
             )
-            await criar_lead_no_pipeline(
-                phone, nome=lead.name, cidade=lead.city or None,
-                email=lead_state.email or None, resumo=resumo_soft, finalizado=False,
-            )
+            if not resultado_soft.get("ok"):
+                # So usa o caminho simples (sem rodizio de verdade) se o
+                # caminho certo falhou -- antes rodava sempre, e mesmo
+                # quando o CRM atribuia um vendedor certinho via rodizio,
+                # esse fallback rodava por cima e podia sobrescrever/
+                # confundir o dono do card.
+                await criar_lead_no_pipeline(
+                    phone, nome=lead.name, cidade=lead.city or None,
+                    email=lead_state.email or None, resumo=resumo_soft, finalizado=False,
+                )
 
             if resultado_soft.get("ok"):
                 logger.info(f"[ARCCA] Card retido (handoff fraco) criado para {phone}")
@@ -1506,15 +1515,16 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                 "fechamento.\n\n"
                 "── CONVERSA (ultimas mensagens) ──\n" + "\n".join(historico_q)
             )
-            resultado_q = await arcca_client(
+            resultado_q = await enviar_lead_crm(
                 phone, lead.name, resumo_q,
                 cidade=lead.city or "", origem="Bruno IA", finalizado=False,
                 email=lead_state.email or None,
             )
-            await criar_lead_no_pipeline(
-                phone, nome=lead.name, cidade=lead.city or None,
-                email=lead_state.email or None, resumo=resumo_q, finalizado=False,
-            )
+            if not resultado_q.get("ok"):
+                await criar_lead_no_pipeline(
+                    phone, nome=lead.name, cidade=lead.city or None,
+                    email=lead_state.email or None, resumo=resumo_q, finalizado=False,
+                )
 
             if resultado_q.get("ok"):
                 logger.info(f"[ARCCA] Card por qualificacao criado para {phone} ({lead.name})")

@@ -122,6 +122,7 @@ async def escalate_to_human(
         return {"ok": False, "agent_name": None, "agent_phone": None}
 
 
-# Alias para compatibilidade com openai_client.py (mesmo nome usado
-# antes com o arcca_client.py, assim nao precisa mexer em quem chama)
-arcca_client = escalate_to_human
+# Nome antigo era 'arcca_client', do tempo do sistema ARCCA (ja
+# desativado). Renomeado pra nao confundir -- essa funcao SEMPRE foi
+# a integracao com o Doss CRM atual, so o nome ficou de lembranca.
+enviar_lead_crm = escalate_to_human
