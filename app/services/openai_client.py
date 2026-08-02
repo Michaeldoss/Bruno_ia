@@ -27,6 +27,13 @@ from app.core.media_catalog import find_media_for_message
 from app.services.campaigns import detectar_campanha, get_contexto_campanha, get_origem_campanha
 from app.services.usage_tracker import registrar_uso_anthropic, registrar_uso_whisper
 
+# ── Uniplus desligado temporariamente (31/07-02/08: OAuth2 falhando
+# com 401 direto no provedor, nao e bug do Bruno). Enquanto isso nao
+# for resolvido do lado da Uniplus, o Bruno nem tenta mais -- assim
+# nao perde 5s de timeout por chamada, em toda conversa, à toa.
+# Reativar: so mudar pra True depois que a credencial for corrigida.
+UNIPLUS_ATIVO = False
+
 # ── Alerta de falhas críticas de API (saldo insuficiente, etc) ──────────
 # Numero do Michael (admin), mesmo formato usado no resto do sistema.
 _ADMIN_ALERT_PHONE = "+554792307367"
@@ -854,7 +861,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         stock_info = ""
 
         try:
-            customer_data = await asyncio.wait_for(uniplus_service.get_customer_by_phone(phone), timeout=5.0)
+            customer_data = await asyncio.wait_for(uniplus_service.get_customer_by_phone(phone), timeout=5.0) if UNIPLUS_ATIVO else None
         except asyncio.TimeoutError:
             logger.warning("Timeout Uniplus customer")
 
@@ -910,7 +917,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                 try:
                     data = await asyncio.wait_for(
                         uniplus_service.get_stock_and_price(codigo_encontrado), timeout=5.0
-                    )
+                    ) if UNIPLUS_ATIVO else None
                     if data:
                         disponivel = "disponivel" if data['estoque'] > 0 else "SEM ESTOQUE"
                         stock_info += f"\n[SUPRIMENTOS]: {data['nome']} (cod {codigo_encontrado}) | Saldo: {data['estoque']} un | {disponivel}\n"
@@ -932,7 +939,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                         try:
                             data = await asyncio.wait_for(
                                 uniplus_service.get_stock_and_price(item["codigo"]), timeout=5.0
-                            )
+                            ) if UNIPLUS_ATIVO else None
                             if data:
                                 disponivel = "disponivel" if data['estoque'] > 0 else "SEM ESTOQUE"
                                 stock_info += f"  - {data['nome']} (cod {item['codigo']}) | Saldo: {data['estoque']} un | {disponivel}\n"
@@ -943,7 +950,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                         try:
                             data = await asyncio.wait_for(
                                 uniplus_service.get_stock_and_price(qw), timeout=5.0
-                            )
+                            ) if UNIPLUS_ATIVO else None
                             if data:
                                 stock_info += f"\n[SUPRIMENTOS]: {data['nome']} | Saldo: {data['estoque']}\n"
                         except asyncio.TimeoutError:
