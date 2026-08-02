@@ -22,6 +22,7 @@ espelhamento falhar. So loga o erro. O cliente no WhatsApp nunca deve
 notar problema aqui.
 """
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone, timedelta
@@ -417,6 +418,48 @@ async def log_message(
                 json=patch_body,
             )
     except Exception as e:
-        # De proposito: nunca propaga. Espelhamento no CRM e "nice to
-        # have", nao pode derrubar o atendimento real do cliente.
-        logger.error(f"[CRM Inbox] Falha ao espelhar mensagem ({phone}): {e}")
+        # De proposito: nunca propaga pro atendimento real. Mas antes
+        # so desistia na primeira falha -- se fosse um timeout de rede
+        # passageiro, a mensagem do cliente sumia do CRM pra sempre,
+        # sem ninguem saber, criando buraco na conversa (alguem olhando
+        # o CRM via achar que o Bruno respondeu algo do nada). Agora
+        # tenta mais uma vez antes de desistir de verdade.
+        logger.error(f"[CRM Inbox] Falha ao espelhar mensagem ({phone}), tentando de novo: {e}")
+        try:
+            await asyncio.sleep(2)
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                contact_id = await _get_or_create_contact(client, phone_clean, nome)
+                if not contact_id:
+                    return
+                conversation_id, current_unread = await _get_or_create_conversation(client, phone_clean, contact_id)
+                if not conversation_id:
+                    return
+                await client.post(
+                    f"{SUPABASE_URL}/rest/v1/messages",
+                    headers=_headers(),
+                    json={
+                        "org_id": ORG_ID,
+                        "conversation_id": conversation_id,
+                        "content": content[:4000],
+                        "is_from_contact": is_from_contact,
+                        "type": msg_type,
+                        "media_url": media_url,
+                        "whatsapp_id": whatsapp_id,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                patch_body = {
+                    "last_message": content[:300],
+                    "last_message_at": datetime.now(timezone.utc).isoformat(),
+                }
+                if is_from_contact:
+                    patch_body["unread_count"] = current_unread + 1
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/conversations",
+                    params={"id": f"eq.{conversation_id}"},
+                    headers=_headers(),
+                    json=patch_body,
+                )
+        except Exception as e2:
+            logger.error(f"[CRM Inbox] Falha definitiva ao espelhar mensagem ({phone}) mesmo na 2a tentativa: {e2}")
+
