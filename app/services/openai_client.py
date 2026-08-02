@@ -26,6 +26,34 @@ from app.services.serasa_client import (
 from app.core.media_catalog import find_media_for_message
 from app.services.campaigns import detectar_campanha, get_contexto_campanha, get_origem_campanha
 from app.services.usage_tracker import registrar_uso_anthropic, registrar_uso_whisper
+
+# ── Alerta de falhas críticas de API (saldo insuficiente, etc) ──────────
+# Numero do Michael (admin), mesmo formato usado no resto do sistema.
+_ADMIN_ALERT_PHONE = "+554792307367"
+_ultimo_alerta_saldo = {"quando": None}
+
+
+async def _alertar_admin_saldo_insuficiente(erro) -> None:
+    from datetime import datetime, timedelta
+
+    agora = datetime.utcnow()
+    ultimo = _ultimo_alerta_saldo["quando"]
+    if ultimo and (agora - ultimo) < timedelta(minutes=15):
+        return  # cooldown -- ja avisou recentemente, nao repete
+
+    _ultimo_alerta_saldo["quando"] = agora
+    try:
+        await twilio_service.send_whatsapp_message(
+            to=_ADMIN_ALERT_PHONE,
+            body=(
+                "⚠️ URGENTE: o Bruno IA parou de responder porque o "
+                "saldo da API da Anthropic acabou. Clientes estão "
+                "mandando mensagem e não recebendo resposta agora. "
+                "Recarregue em console.anthropic.com o quanto antes."
+            ),
+        )
+    except Exception as alert_error:
+        logger.error("Falha ao enviar alerta de saldo insuficiente: %s", alert_error)
 from app.services.web_search_helper import precisa_buscar_concorrente, buscar_info_concorrente
 
 settings = get_settings()
@@ -953,7 +981,12 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
         if system_dinamico.strip():
             system_parts.append({"type": "text", "text": system_dinamico})
 
-        # ── Chamada à API ─────────────────────────────────────────────────
+        # ── Alerta de saldo insuficiente na API da Anthropic ────────────────
+        # Sem isso, quando o credito acaba a excecao sobe pro handler
+        # generico, o cliente recebe uma resposta ruim (ou nenhuma) e
+        # ninguem fica sabendo -- o lead se perde caladinho. Cooldown de
+        # 15 min pra nao floodar o WhatsApp se varios leads baterem o
+        # mesmo erro ao mesmo tempo.
         try:
             response = await asyncio.wait_for(
                 client.messages.create(
@@ -968,6 +1001,12 @@ async def process_message_with_assistant(thread_id: str, user_message: str) -> l
         except asyncio.TimeoutError:
             logger.error("Timeout Claude API")
             return ["Pode repetir? Tive uma lentidão aqui."]
+        except Exception as api_error:
+            erro_texto = str(api_error).lower()
+            if "insufficient_balance" in erro_texto or "credit balance is too low" in erro_texto:
+                await _alertar_admin_saldo_insuficiente(api_error)
+                return ["Já te retorno, só um instante."]
+            raise
 
         if not response.content:
             return ["Pode repetir?"]
