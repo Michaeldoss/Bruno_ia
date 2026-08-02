@@ -27,10 +27,13 @@ from app.core.media_catalog import find_media_for_message
 from app.services.campaigns import detectar_campanha, get_contexto_campanha, get_origem_campanha
 from app.services.usage_tracker import registrar_uso_anthropic, registrar_uso_whisper
 
-# Uniplus reativado em 02/08 as 22h -- credencial corrigida (faltava
-# a variavel UNIPLUS_CLIENT_ID de verdade no Render, so existia com
-# outro nome). Testado e confirmado gerando token com sucesso.
-UNIPLUS_ATIVO = True
+# Uniplus: credencial corrigida e testada (02/08) -- autenticacao
+# funciona. Mas a consulta de estoque na conversa do Bruno fica
+# desligada por enquanto, a pedido do Michael, ate ele decidir
+# reativar. O robo de pesquisa de satisfacao nao depende dessa flag
+# (usa a integracao Uniplus por outro caminho) e ja volta a funcionar
+# sozinho com a credencial corrigida.
+UNIPLUS_ATIVO = False
 
 # ── Alerta de falhas críticas de API (saldo insuficiente, etc) ──────────
 # Numero do Michael (admin), mesmo formato usado no resto do sistema.
