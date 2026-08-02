@@ -575,7 +575,33 @@ async def transcribe_audio(audio_url: str) -> str:
 async def create_thread() -> str:
     return str(uuid.uuid4())
 
+# ── Trava por conversa ────────────────────────────────────────────────
+# Sem isso, duas mensagens do MESMO telefone chegando quase juntas (ex:
+# CNPJ e email em sequencia rapida) eram processadas em paralelo, cada
+# uma com sua propria sessao de banco escrevendo no mesmo lead_state ao
+# mesmo tempo. Resultado observado em producao: resposta calculada com
+# dado desatualizado (pediu email de novo mesmo ja tendo recebido) e,
+# em casos de conflito de escrita, a mensagem seguinte caia no erro
+# generico repetidamente. Agora mensagens do mesmo thread_id (=mesmo
+# telefone) sao processadas em fila, uma de cada vez, na ordem que
+# chegaram -- outros telefones continuam em paralelo normalmente.
+_locks_por_conversa: dict = {}
+
+
+def _lock_da_conversa(thread_id: str) -> asyncio.Lock:
+    lock = _locks_por_conversa.get(thread_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _locks_por_conversa[thread_id] = lock
+    return lock
+
+
 async def process_message_with_assistant(thread_id: str, user_message: str) -> list:
+    async with _lock_da_conversa(thread_id):
+        return await _process_message_with_assistant_impl(thread_id, user_message)
+
+
+async def _process_message_with_assistant_impl(thread_id: str, user_message: str) -> list:
     if not client or getattr(settings, "ANTHROPIC_API_KEY", "stub") == "stub":
         return ["[STUB MODE] Anthropic Key ausente."]
 
