@@ -27,12 +27,10 @@ from app.core.media_catalog import find_media_for_message
 from app.services.campaigns import detectar_campanha, get_contexto_campanha, get_origem_campanha
 from app.services.usage_tracker import registrar_uso_anthropic, registrar_uso_whisper
 
-# ── Uniplus desligado temporariamente (31/07-02/08: OAuth2 falhando
-# com 401 direto no provedor, nao e bug do Bruno). Enquanto isso nao
-# for resolvido do lado da Uniplus, o Bruno nem tenta mais -- assim
-# nao perde 5s de timeout por chamada, em toda conversa, à toa.
-# Reativar: so mudar pra True depois que a credencial for corrigida.
-UNIPLUS_ATIVO = False
+# Uniplus reativado em 02/08 as 22h -- credencial corrigida (faltava
+# a variavel UNIPLUS_CLIENT_ID de verdade no Render, so existia com
+# outro nome). Testado e confirmado gerando token com sucesso.
+UNIPLUS_ATIVO = True
 
 # ── Alerta de falhas críticas de API (saldo insuficiente, etc) ──────────
 # Numero do Michael (admin), mesmo formato usado no resto do sistema.
