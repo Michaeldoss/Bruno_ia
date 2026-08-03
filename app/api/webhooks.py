@@ -7,7 +7,7 @@ from app.services.buffer_service import message_buffer
 from app.core.media_catalog import MEDIA_CATALOG
 from app.services.followup_service import resetar_followup
 from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
-from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently
+from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently, criar_lead_no_pipeline
 from app.models.database import SessionLocal, Lead, MediaSent, Conversation, LeadState
 from app.config import get_settings
 import logging
@@ -282,12 +282,28 @@ async def handle_async_response(
             return
 
         lead = db.query(Lead).filter(Lead.phone == phone).first()
+        eh_lead_novo = lead is None
         if not lead:
             thread_id = await create_thread()
             lead = Lead(phone=phone, thread_id=thread_id)
             db.add(lead)
             db.commit()
             db.refresh(lead)
+
+        if eh_lead_novo:
+            # FIX: antes o card no pipeline so nascia quando o Bruno
+            # qualificava/fechava/transferia -- se a conversa parasse no
+            # meio, nunca existia registro NENHUM no CRM daquele contato,
+            # mesmo ele tendo escrito de verdade. Agora o card nasce ja
+            # no primeiro contato (etapa inicial, dados minimos), e as
+            # chamadas mais pra frente na conversa (qualificacao,
+            # fechamento) so ATUALIZAM esse mesmo card -- nunca duplica,
+            # ja que a funcao busca por conversa/contato antes de criar.
+            asyncio.create_task(criar_lead_no_pipeline(
+                phone, nome=None, cidade=None, email=None,
+                resumo="Primeiro contato recebido -- ainda em atendimento.",
+                finalizado=False,
+            ))
 
         thread_id = lead.thread_id
 
