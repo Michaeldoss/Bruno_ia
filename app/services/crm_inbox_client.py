@@ -404,6 +404,61 @@ async def _sincronizar_uma_vez(
         )
 
 
+async def buscar_memoria_ia(phone: str) -> Optional[dict]:
+    """Busca a analise mais recente que a propria IA supervisora ja fez
+    dessa conversa (tabela conversation_ai_memory) -- fatos, produtos,
+    objecoes, promessas, proximos passos e preferencias ja levantados.
+
+    Ate 02/08/2026 essa memoria so alimentava o painel do CRM pra
+    humano ler. O Bruno nunca usava o que ele mesmo (via a IA
+    supervisora) ja tinha apurado sobre o cliente. Agora ele busca isso
+    ANTES de responder, pra negociar com base no que ja foi combinado/
+    prometido, em vez de reconstruir tudo so pelo historico bruto de
+    mensagens. Nunca levanta excecao -- se falhar, Bruno segue sem essa
+    memoria extra, como sempre funcionou.
+    """
+    if not SUPABASE_KEY or SUPABASE_KEY == "stub":
+        return None
+
+    phone_clean = _normalize_phone(phone)
+    if not phone_clean:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            conv = await client.get(
+                f"{SUPABASE_URL}/rest/v1/conversations",
+                params={
+                    "whatsapp_phone": f"eq.{phone_clean}",
+                    "org_id": f"eq.{ORG_ID}",
+                    "select": "id",
+                    "order": "created_at.desc",
+                    "limit": 1,
+                },
+                headers=_headers(),
+            )
+            if conv.status_code != 200 or not isinstance(conv.json(), list) or not conv.json():
+                return None
+            conversation_id = conv.json()[0]["id"]
+
+            mem = await client.get(
+                f"{SUPABASE_URL}/rest/v1/conversation_ai_memory",
+                params={
+                    "conversation_id": f"eq.{conversation_id}",
+                    "select": "summary,recommended_action,memory,customer_intent",
+                    "order": "analyzed_at.desc",
+                    "limit": 1,
+                },
+                headers=_headers(),
+            )
+            if mem.status_code != 200 or not isinstance(mem.json(), list) or not mem.json():
+                return None
+            return mem.json()[0]
+    except Exception as e:
+        logger.error(f"[CRM Inbox] Falha ao buscar memoria da IA ({phone}): {e}")
+        return None
+
+
 async def log_message(
     phone: str,
     content: str,
