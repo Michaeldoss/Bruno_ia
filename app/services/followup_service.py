@@ -19,6 +19,7 @@ from anthropic import AsyncAnthropic
 from app.config import get_settings
 from app.models.database import SessionLocal, LeadState, Conversation, Lead
 from app.services.twilio_client import twilio_service
+from app.services.crm_inbox_client import criar_lead_no_pipeline
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -34,9 +35,18 @@ JANELAS_COMERCIAIS = [
     (time(13, 30), time(18, 0)),
 ]
 
-FOLLOWUP_MINUTOS = [30, 120, 300, 1440, 2880]
+FOLLOWUP_MINUTOS = [30, 120, 360, 720, 1200]
 INTERVALO_MINIMO_ENTRE_STEPS = 25
-MINUTOS_FECHAR = 4320
+# 22h -- transfere para agente humano antes da janela de 24h do WhatsApp
+# fechar (depois disso, mensagem de texto livre falha com erro 63016).
+MINUTOS_HANDOFF = 1320
+
+# Pool de agentes que recebem o lead quando o Bruno esgota o follow-up
+# sem resposta. Escolhido por quem tem menos cards ativos no momento.
+AGENTES_HANDOFF = {
+    "Michael": "aa5e61b1-a4dd-4905-9e77-6ab447b61a9f",
+    "David": "a570720f-74cf-4de0-bb52-d8fafde8031a",
+}
 
 _anthropic = (
     AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -217,6 +227,92 @@ async def _gerar_mensagem_followup(step: int, nome: str, produto: str, historico
         return FALLBACKS.get(step, FALLBACKS[1])
 
 
+async def _escolher_agente_handoff(client: httpx.AsyncClient) -> str:
+    """Alterna estritamente entre os agentes do pool, um de cada vez.
+
+    Olha quem recebeu o último lead transferido pelo Bruno e devolve o
+    outro agente da sequência. Não é balanceamento por carga -- é ordem
+    fixa, sempre revezando.
+    """
+    try:
+        pool_ids = list(AGENTES_HANDOFF.values())
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/pipeline_leads",
+            params={
+                "origin": "eq.Bruno IA",
+                "owner_id": f"in.({','.join(pool_ids)})",
+                "select": "owner_id,created_at",
+                "order": "created_at.desc",
+                "limit": 1,
+            },
+            headers=_headers(),
+        )
+        if r.status_code == 200 and isinstance(r.json(), list) and r.json():
+            ultimo = r.json()[0].get("owner_id")
+            for agent_id in pool_ids:
+                if agent_id != ultimo:
+                    return agent_id
+    except Exception as exc:
+        logger.error("[FOLLOWUP] Erro ao escolher agente para handoff: %s", exc)
+    return AGENTES_HANDOFF["David"]
+
+
+async def _transferir_para_agente(phone: str) -> bool:
+    """Atribui a conversa a um agente humano do pool e cria o card no pipeline.
+
+    Chamado quando o lead chega perto do limite de 24h da janela de
+    mensagem livre do WhatsApp sem ter respondido a nenhum follow-up.
+    Nunca levanta exceção -- falha aqui não pode travar o loop.
+    """
+    phone_clean = _normalizar_phone(phone)
+    if not phone_clean or not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            agente_id = await _escolher_agente_handoff(client)
+
+            conv = await client.get(
+                f"{SUPABASE_URL}/rest/v1/conversations",
+                params={
+                    "org_id": f"eq.{ORG_ID}",
+                    "whatsapp_phone": f"eq.{phone_clean}",
+                    "select": "id",
+                    "order": "created_at.desc",
+                    "limit": 1,
+                },
+                headers=_headers(),
+            )
+            if conv.status_code == 200 and isinstance(conv.json(), list) and conv.json():
+                conversation_id = conv.json()[0]["id"]
+                await client.patch(
+                    f"{SUPABASE_URL}/rest/v1/conversations",
+                    params={"id": f"eq.{conversation_id}"},
+                    headers=_headers(),
+                    json={"agent_id": agente_id},
+                )
+            else:
+                logger.error("[FOLLOWUP] Handoff de %s: conversa não encontrada no CRM", phone_clean)
+                return False
+
+        db = SessionLocal()
+        try:
+            lead = db.query(Lead).filter(Lead.phone == phone_clean).first()
+            nome = (lead.name or "") if lead else ""
+        finally:
+            db.close()
+
+        ok = await criar_lead_no_pipeline(phone_clean, nome=nome, finalizado=True)
+        logger.info(
+            "[FOLLOWUP] Handoff de %s para agente %s (card criado: %s)",
+            phone_clean, agente_id, ok,
+        )
+        return True
+    except Exception as exc:
+        logger.error("[FOLLOWUP] Erro no handoff de %s: %s", phone_clean, exc)
+        return False
+
+
 async def _processar_lead_followup(db, lead_state: LeadState):
     if lead_state.stage in ("closed", "followup_closed"):
         return
@@ -244,9 +340,13 @@ async def _processar_lead_followup(db, lead_state: LeadState):
     minutos_inativo = (agora_utc - ultima_msg_cliente.created_at).total_seconds() / 60
     step_atual = lead_state.followup_step or 0
 
-    if minutos_inativo >= MINUTOS_FECHAR and step_atual >= len(FOLLOWUP_MINUTOS):
-        lead_state.stage = "followup_closed"
-        db.commit()
+    if minutos_inativo >= MINUTOS_HANDOFF:
+        sucesso = await _transferir_para_agente(lead_state.phone)
+        if sucesso:
+            lead_state.stage = "closed"
+            lead_state.followup_sent_at = None
+            db.commit()
+        # se falhar, não desiste: tenta de novo no próximo ciclo (5 min)
         return
     if step_atual >= len(FOLLOWUP_MINUTOS):
         return
