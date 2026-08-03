@@ -396,9 +396,16 @@ Regras:
 - should_close somente com assunto realmente concluido, sem pergunta, promessa ou acao pendente;
 - pedido autorizado deve ser high ou critical;
 - summary deve consolidar o historico anterior com as novidades, de forma curta e operacional;
-- memory deve conter somente fatos explicitos e uteis.
+- memory deve conter somente fatos explicitos e uteis;
+- recommended_action e o campo mais importante pro agente humano que vai ler isso -- NUNCA use frase generica
+  como "Responder o cliente" ou "Aguardar resposta" quando houver informacao especifica disponivel no
+  historico. Sempre que possivel, a acao deve dizer: o que fazer (ex: cobrar confirmacao, enviar proposta,
+  ligar), sobre o que exatamente (produto/valor/prazo combinado, citando numero quando existir), e o que
+  o cliente esta esperando do agente. Exemplo ruim: "Responder o cliente". Exemplo bom: "Cobrar confirmacao
+  da proposta de R$950/rolo (0,30x25) enviada em 28/07 -- cliente ainda nao respondeu se aceita". So use uma
+  frase genuinamente generica quando o historico realmente nao tiver nenhum detalhe concreto pra citar.
 JSON:
-{"analysis_status":"awaiting_agent|awaiting_customer|negotiation_active|proposal_pending|order_authorized|support|followup_recommended|ready_to_close|critical","subject":"texto curto","customer_intent":"texto curto","last_speaker":"customer|agent","pending_question":true,"needs_agent_reply":true,"needs_followup":false,"should_close":false,"priority":"low|normal|high|critical","summary":"resumo consolidado","recommended_action":"acao objetiva","memory":{"facts":[],"products":[],"objections":[],"promises":[],"next_steps":[],"preferences":[]}}"""
+{"analysis_status":"awaiting_agent|awaiting_customer|negotiation_active|proposal_pending|order_authorized|support|followup_recommended|ready_to_close|critical","subject":"texto curto","customer_intent":"texto curto","last_speaker":"customer|agent","pending_question":true,"needs_agent_reply":true,"needs_followup":false,"should_close":false,"priority":"low|normal|high|critical","summary":"resumo consolidado","recommended_action":"acao especifica e concreta, citando o que fazer + sobre o que + o que o cliente espera (ver regra acima)","memory":{"facts":[],"products":[],"objections":[],"promises":[],"next_steps":[],"preferences":[]}}"""
         user = f"""CLIENTE: {contact.get('name') or contact.get('phone') or ''}
 EMPRESA: {contact.get('company') or ''}
 AGENTE: {agent.get('name') or ''}
