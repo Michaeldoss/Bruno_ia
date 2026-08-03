@@ -405,17 +405,19 @@ async def _sincronizar_uma_vez(
 
 
 async def buscar_memoria_ia(phone: str) -> Optional[dict]:
-    """Busca a analise mais recente que a propria IA supervisora ja fez
-    dessa conversa (tabela conversation_ai_memory) -- fatos, produtos,
-    objecoes, promessas, proximos passos e preferencias ja levantados.
+    """Busca e junta a analise mais recente que a IA supervisora ja fez
+    de TODAS as conversas desse contato -- nao so a conversa atual do
+    Bruno. O mesmo cliente pode ja ter falado com um vendedor humano
+    (David, Michael, etc) em outra conversa/instancia de WhatsApp, e o
+    que foi apurado la (fatos, produtos, objecoes, promessas, proximos
+    passos) tambem precisa alimentar o Bruno -- senao ele repete
+    pergunta ou ignora combinado que so aconteceu em outro canal.
 
-    Ate 02/08/2026 essa memoria so alimentava o painel do CRM pra
-    humano ler. O Bruno nunca usava o que ele mesmo (via a IA
-    supervisora) ja tinha apurado sobre o cliente. Agora ele busca isso
-    ANTES de responder, pra negociar com base no que ja foi combinado/
-    prometido, em vez de reconstruir tudo so pelo historico bruto de
-    mensagens. Nunca levanta excecao -- se falhar, Bruno segue sem essa
-    memoria extra, como sempre funcionou.
+    Junta as listas (facts/products/objections/promises/next_steps/
+    preferences) de todas as conversas do contato, sem duplicar, e usa
+    a "situacao atual" (recommended_action) da analise mais recente
+    entre todas elas. Nunca levanta excecao -- se falhar, Bruno segue
+    sem essa memoria extra, como sempre funcionou.
     """
     if not SUPABASE_KEY or SUPABASE_KEY == "stub":
         return None
@@ -425,35 +427,87 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
         return None
 
     try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            conv = await client.get(
-                f"{SUPABASE_URL}/rest/v1/conversations",
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            # 1. Acha o contato (pode ter varias conversas em instancias
+            # diferentes -- precisa do contact_id, nao so de UMA conversa).
+            contato = await client.get(
+                f"{SUPABASE_URL}/rest/v1/contacts",
                 params={
-                    "whatsapp_phone": f"eq.{phone_clean}",
+                    "phone": f"eq.{phone_clean}",
                     "org_id": f"eq.{ORG_ID}",
                     "select": "id",
-                    "order": "created_at.desc",
                     "limit": 1,
                 },
                 headers=_headers(),
             )
-            if conv.status_code != 200 or not isinstance(conv.json(), list) or not conv.json():
+            if contato.status_code != 200 or not isinstance(contato.json(), list) or not contato.json():
                 return None
-            conversation_id = conv.json()[0]["id"]
+            contact_id = contato.json()[0]["id"]
 
-            mem = await client.get(
+            # 2. TODAS as conversas desse contato, em qualquer instancia.
+            convs = await client.get(
+                f"{SUPABASE_URL}/rest/v1/conversations",
+                params={
+                    "contact_id": f"eq.{contact_id}",
+                    "org_id": f"eq.{ORG_ID}",
+                    "select": "id",
+                },
+                headers=_headers(),
+            )
+            if convs.status_code != 200 or not isinstance(convs.json(), list) or not convs.json():
+                return None
+            conversation_ids = [c["id"] for c in convs.json()]
+
+            # 3. Analise mais recente de CADA uma dessas conversas (nao so
+            # a mais recente entre todas -- uma conversa antiga com o
+            # David pode ter um fato que a conversa nova com o Bruno
+            # ainda nao tem).
+            id_list = ",".join(conversation_ids)
+            mems = await client.get(
                 f"{SUPABASE_URL}/rest/v1/conversation_ai_memory",
                 params={
-                    "conversation_id": f"eq.{conversation_id}",
-                    "select": "summary,recommended_action,memory,customer_intent",
+                    "conversation_id": f"in.({id_list})",
+                    "select": "conversation_id,analyzed_at,summary,recommended_action,memory",
                     "order": "analyzed_at.desc",
-                    "limit": 1,
                 },
                 headers=_headers(),
             )
-            if mem.status_code != 200 or not isinstance(mem.json(), list) or not mem.json():
+            if mems.status_code != 200 or not isinstance(mems.json(), list) or not mems.json():
                 return None
-            return mem.json()[0]
+
+            registros = mems.json()
+            # Uma analise mais recente por conversation_id (a tabela pode
+            # ter historico de varias analises da mesma conversa).
+            por_conversa = {}
+            for r in registros:
+                cid = r.get("conversation_id")
+                if cid and cid not in por_conversa:
+                    por_conversa[cid] = r
+            analises = list(por_conversa.values())
+            if not analises:
+                return None
+
+            # Junta as listas de memoria de todas as conversas, sem duplicar.
+            memoria_unificada = {"facts": [], "products": [], "objections": [], "promises": [], "next_steps": [], "preferences": []}
+            for analise in analises:
+                mem_data = analise.get("memory") if isinstance(analise.get("memory"), dict) else {}
+                for chave in memoria_unificada:
+                    itens = mem_data.get(chave)
+                    if isinstance(itens, list):
+                        for item in itens:
+                            if item not in memoria_unificada[chave]:
+                                memoria_unificada[chave].append(item)
+
+            # "Situacao atual" vem da analise mais recente entre todas as
+            # conversas (ja veio ordenado por analyzed_at desc).
+            mais_recente = analises[0]
+
+            return {
+                "recommended_action": mais_recente.get("recommended_action"),
+                "customer_intent": mais_recente.get("customer_intent"),
+                "memory": memoria_unificada,
+                "conversas_consideradas": len(analises),
+            }
     except Exception as e:
         logger.error(f"[CRM Inbox] Falha ao buscar memoria da IA ({phone}): {e}")
         return None
