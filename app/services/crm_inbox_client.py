@@ -236,6 +236,8 @@ async def criar_lead_no_pipeline(
     email: Optional[str] = None,
     resumo: Optional[str] = None,
     finalizado: bool = False,
+    etapa_nome: Optional[str] = None,
+    produto: Optional[str] = None,
 ) -> bool:
     """Cria o card no funil do Doss CRM quando o Bruno qualifica o lead.
 
@@ -246,6 +248,11 @@ async def criar_lead_no_pipeline(
     Tambem aproveita para gravar nome/cidade/e-mail no contato: sem isso
     o cliente fica salvo como o proprio numero ("554396044243") e o
     vendedor abre o card sem saber com quem esta falando.
+
+    etapa_nome: se informado, move o card pra essa etapa do Funil
+    Comercial -- MAS SO PRA FRENTE, nunca regride uma etapa que um
+    humano ja avancou manualmente no board (compara pela posicao/ordem
+    configurada da etapa, nao so pelo nome).
 
     Nunca levanta excecao: falha aqui nao pode derrubar o atendimento.
     """
@@ -281,13 +288,46 @@ async def criar_lead_no_pipeline(
                     json=patch,
                 )
 
-            # ja existe card para esse contato? nao duplica
+            # resolve o stage_id alvo (se pedido) buscando pela posicao,
+            # pra poder comparar "pra frente ou pra tras" com a etapa atual
+            etapa_alvo_id, etapa_alvo_pos = None, None
+            if etapa_nome:
+                st = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/pipeline_stages",
+                    params={"pipeline_id": f"eq.{PIPELINE_COMERCIAL}", "name": f"eq.{etapa_nome}", "select": "id,position", "limit": 1},
+                    headers=_headers(),
+                )
+                if st.status_code == 200 and isinstance(st.json(), list) and st.json():
+                    etapa_alvo_id = st.json()[0]["id"]
+                    etapa_alvo_pos = st.json()[0]["position"]
+
+            # ja existe card para esse contato? enriquece em vez de so confirmar
             r = await client.get(
                 f"{SUPABASE_URL}/rest/v1/pipeline_leads",
-                params={"contact_id": f"eq.{contact_id}", "select": "id", "limit": 1},
+                params={"contact_id": f"eq.{contact_id}", "status": "eq.active", "select": "id,stage_id,product", "limit": 1},
                 headers=_headers(),
             )
             if r.status_code == 200 and isinstance(r.json(), list) and r.json():
+                card = r.json()[0]
+                patch_card = {}
+                if produto and not card.get("product"):
+                    patch_card["product"] = produto
+                if etapa_alvo_id:
+                    st_atual = await client.get(
+                        f"{SUPABASE_URL}/rest/v1/pipeline_stages",
+                        params={"id": f"eq.{card['stage_id']}", "select": "position", "limit": 1},
+                        headers=_headers(),
+                    )
+                    pos_atual = st_atual.json()[0]["position"] if st_atual.status_code == 200 and st_atual.json() else 0
+                    if etapa_alvo_pos > pos_atual:
+                        patch_card["stage_id"] = etapa_alvo_id
+                if patch_card:
+                    await client.patch(
+                        f"{SUPABASE_URL}/rest/v1/pipeline_leads",
+                        params={"id": f"eq.{card['id']}"},
+                        headers=_headers(),
+                        json=patch_card,
+                    )
                 return True
 
             # respeita remocao manual: se alguem tirou esse contato do
@@ -331,11 +371,12 @@ async def criar_lead_no_pipeline(
                     "contact_id": contact_id,
                     "conversation_id": conversation_id,
                     "pipeline_id": PIPELINE_COMERCIAL,
-                    "stage_id": STAGE_CONTATO_INICIADO,
+                    "stage_id": etapa_alvo_id or STAGE_CONTATO_INICIADO,
                     "owner_id": owner_id,
                     "status": "active",
                     "title": titulo,
                     "origin": "Bruno IA",
+                    "product": produto,
                 },
             )
             if novo.status_code >= 300:

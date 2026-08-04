@@ -937,20 +937,39 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         # card do CRM ate um desses 3 momentos acontecer (as vezes nunca).
         # Agora, toda vez que algum dado novo e capturado, sincroniza na
         # hora (fire-and-forget, nao atrasa a resposta ao cliente).
+        #
+        # Alem disso, calcula a MAIOR etapa do funil que os dados ja
+        # capturados sustentam de verdade (cada etapa do Funil Comercial
+        # tem campos obrigatorios configurados no CRM) e move o card pra
+        # la. Limitado ate "Em Qualificacao" por enquanto -- etapas mais
+        # fundas (Qualificado em diante) exigem dado mais subjetivo (dor
+        # real do cliente, nao uma palavra-chave) que ainda nao tem
+        # extracao confiavel implementada. Nunca avanca sozinho ate
+        # Fechado/Perdido -- isso continua sendo so acao humana no board.
         if _qualificacao_mudou:
+            origem_atual = get_origem_campanha(campanha_ativa) if campanha_ativa else "WhatsApp Direto"
+            tem_nome = bool(lead.name and lead.name != phone)
+            etapa_calculada = None
+            if tem_nome and lead.city and origem_atual:
+                etapa_calculada = "Contato Iniciado"
+            if etapa_calculada and lead_state.produto_interesse:
+                etapa_calculada = "Em Qualificação"
+
             try:
                 from app.services.crm_inbox_client import criar_lead_no_pipeline as _sync_incremental
                 asyncio.create_task(_sync_incremental(
                     phone,
-                    nome=lead.name if (lead.name and lead.name != phone) else None,
+                    nome=lead.name if tem_nome else None,
                     cidade=lead.city or None,
                     email=lead_state.email or None,
+                    produto=lead_state.produto_interesse or None,
                     resumo=(
                         f"Dado novo capturado durante a conversa"
                         + (f" -- produto de interesse: {lead_state.produto_interesse}" if lead_state.produto_interesse else "")
                         + "."
                     ),
                     finalizado=False,
+                    etapa_nome=etapa_calculada,
                 ))
                 lead_state.ultima_sync_crm = datetime.utcnow()
                 db.commit()
