@@ -74,6 +74,8 @@ class LeadState(Base):
     email     = Column(String, nullable=True)
     telefone  = Column(String, nullable=True)
     card_id   = Column(Integer, nullable=True)
+    produto_interesse = Column(String, nullable=True)
+    ultima_sync_crm   = Column(DateTime, nullable=True)
 
     # ── Follow-up automático ───────────────────────────────────────────────
     followup_step    = Column(Integer,  default=0)

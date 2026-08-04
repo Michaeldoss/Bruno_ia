@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 import asyncio
+from datetime import datetime
 from anthropic import AsyncAnthropic
 from openai import OpenAI
 import docx
@@ -871,6 +872,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         db.commit()
 
         import re as _re2
+        _qualificacao_mudou = False
         email_match = _re2.search(r'[\w.+-]+@[\w-]+\.[\w.]+', user_message)
         if email_match:
             novo_email = email_match.group()
@@ -878,6 +880,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
             if not any(d in novo_email.lower() for d in EMAILS_DOSS):
                 lead_state.email = novo_email
                 db.commit()
+                _qualificacao_mudou = True
 
         if not lead.city:
             import re as _re_cidade
@@ -890,6 +893,70 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                 if len(cidade_detectada) > 3:
                     lead.city = cidade_detectada
                     db.commit()
+                    _qualificacao_mudou = True
+
+        if not lead.name or lead.name == phone:
+            import re as _re_nome
+            # Heuristica leve, mesmo espirito da extracao de cidade acima --
+            # nao e perfeita, mas cobre os jeitos mais comuns de alguem se
+            # apresentar. Sem isso, lead.name nunca era preenchido durante
+            # a conversa (so lido, nunca escrito), o que quebrava qualquer
+            # logica que dependesse de "ja sabemos o nome do cliente".
+            nome_match = _re_nome.search(
+                r'(?:me chamo|meu nome é|sou o|sou a|aqui é o|aqui é a|pode me chamar de|é o|é a)\s+'
+                r'([A-Za-záàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+(?:\s+[A-Za-záàâãéèêíïóôõöúçñ]+){0,2})',
+                user_message, _re_nome.IGNORECASE
+            )
+            if nome_match:
+                nome_detectado = nome_match.group(1).strip()
+                if 2 < len(nome_detectado) < 60:
+                    lead.name = nome_detectado
+                    db.commit()
+                    _qualificacao_mudou = True
+
+        if not lead_state.produto_interesse:
+            _PALAVRAS_PRODUTO = {
+                "dgtex": "Tinta DGtex (Sublimação)", "sublim": "Tinta DGtex (Sublimação)",
+                "dgeco": "Tinta DGeco (Eco-Solvente)", "eco solvente": "Tinta DGeco (Eco-Solvente)",
+                "dtf": "Equipamento/Tinta DTF", "uv flex": "Tinta UV Flex",
+                "conversão": "Conversão de equipamento Epson", "converter": "Conversão de equipamento Epson",
+                "f6370": "Conversão Epson F6370", "f6200": "Conversão Epson F6200",
+                "f6070": "Conversão Epson F6070", "f9470": "Conversão Epson F9470",
+            }
+            for _termo, _rotulo in _PALAVRAS_PRODUTO.items():
+                if _termo in user_message.lower():
+                    lead_state.produto_interesse = _rotulo
+                    db.commit()
+                    _qualificacao_mudou = True
+                    break
+
+        # FIX (arquitetura pedida 04/08): antes o CRM so recebia dado de
+        # qualificacao em 3 momentos (primeiro contato, handoff, fechamento)
+        # -- se o cliente informasse cidade/nome/produto no meio da
+        # conversa, isso ficava preso no banco do Bruno, sem refletir no
+        # card do CRM ate um desses 3 momentos acontecer (as vezes nunca).
+        # Agora, toda vez que algum dado novo e capturado, sincroniza na
+        # hora (fire-and-forget, nao atrasa a resposta ao cliente).
+        if _qualificacao_mudou:
+            try:
+                from app.services.crm_inbox_client import criar_lead_no_pipeline as _sync_incremental
+                asyncio.create_task(_sync_incremental(
+                    phone,
+                    nome=lead.name if (lead.name and lead.name != phone) else None,
+                    cidade=lead.city or None,
+                    email=lead_state.email or None,
+                    resumo=(
+                        f"Dado novo capturado durante a conversa"
+                        + (f" -- produto de interesse: {lead_state.produto_interesse}" if lead_state.produto_interesse else "")
+                        + "."
+                    ),
+                    finalizado=False,
+                ))
+                lead_state.ultima_sync_crm = datetime.utcnow()
+                db.commit()
+            except Exception as e:
+                logger.error(f"[SYNC INCREMENTAL] Falha ao atualizar CRM em tempo real ({phone}): {e}")
+
 
         # ANTES: 'and lead_state.stage not in ("awaiting_cnpj", "cnpj_received")'
         # bloqueava a extracao de telefone justamente durante e depois do
