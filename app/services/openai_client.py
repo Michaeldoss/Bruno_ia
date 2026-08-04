@@ -363,9 +363,11 @@ iguais entre si. NUNCA afirme que uma máquina é compatível sem saber o
 sistema de alimentação dela. Pergunte ao cliente como a tinta é
 alimentada na máquina dele (bag, cartucho com chip, cartucho sem chip)
 antes de confirmar se atendemos. Se não tiver certeza depois de
-perguntar, diga que vai confirmar com a equipe técnica antes de
-garantir -- nunca invente compatibilidade pra não perder a venda na
-hora, isso gera problema maior depois.
+perguntar, o sistema já aciona sozinho a transferência pra um agente
+técnico humano nesse momento -- você só precisa avisar o cliente que um
+especialista vai confirmar isso com ele em breve, sem prometer de forma
+vaga tipo "vou verificar depois" (isso já é feito de verdade, não é só
+retórica).
 
 PESQUISA DE CONCORRENTE, NUNCA VIOLE:
 Se o cliente mencionar um nome de fornecedor/concorrente que você não
@@ -1044,6 +1046,26 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
             except Exception as e:
                 logger.error(f"Erro busca concorrente: {e}")
 
+            # FIX: se o Bruno so DIZER "vou confirmar com a tecnica" sem
+            # nada por tras, e uma promessa vazia (mesmo erro que ja
+            # perdeu lead antes -- "estou verificando" que nunca teve
+            # retorno). Quando a duvida e sobre COMPATIBILIDADE de
+            # maquina de outra marca (nao so info generica), aciona a
+            # transferencia de verdade pra um agente humano agora,
+            # nao so promete no texto.
+            _termos_compat = ["compat", "aceita", "serve", "bag", "cartucho", "chip", "alimenta"]
+            if any(t in user_message.lower() for t in _termos_compat):
+                system_dinamico_compat_flag = True
+                try:
+                    from app.services.followup_service import _transferir_para_agente
+                    asyncio.create_task(_transferir_para_agente(phone))
+                except Exception as e:
+                    logger.error(f"Falha ao acionar handoff de compatibilidade: {e}")
+            else:
+                system_dinamico_compat_flag = False
+        else:
+            system_dinamico_compat_flag = False
+
         # ── Decide modelo com historico_count ─────────────────────────────
         model = choose_model(user_message, historico_count)
 
@@ -1080,6 +1102,14 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
             system_dinamico += f"\n\n{get_contexto_campanha(campanha_ativa)}"
         if info_concorrente:
             system_dinamico += f"\n\n[INFO CONCORRENTE - {marca_detectada.upper()}]: {info_concorrente}"
+        if system_dinamico_compat_flag:
+            system_dinamico += (
+                "\n\n[HANDOFF ACIONADO]: A pergunta e sobre compatibilidade de maquina de "
+                "outra marca com nossa tinta. A transferencia pra um agente tecnico humano "
+                "JA FOI acionada de verdade agora. Diga ao cliente que um especialista "
+                "tecnico vai confirmar isso com ele em breve -- NAO diga 'vou verificar' "
+                "de forma vaga, diga que ja encaminhou e alguem vai falar com ele."
+            )
 
         # Memoria que a propria IA supervisora do CRM ja apurou dessa
         # conversa (fatos, produtos, objecoes, promessas, proximos passos,
