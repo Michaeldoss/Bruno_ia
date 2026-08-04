@@ -257,11 +257,13 @@ async def _escolher_agente_handoff(client: httpx.AsyncClient) -> str:
     return AGENTES_HANDOFF["David"]
 
 
-async def _transferir_para_agente(phone: str) -> bool:
+async def _transferir_para_agente(phone: str, resumo: str = None) -> bool:
     """Atribui a conversa a um agente humano do pool e cria o card no pipeline.
 
     Chamado quando o lead chega perto do limite de 24h da janela de
-    mensagem livre do WhatsApp sem ter respondido a nenhum follow-up.
+    mensagem livre do WhatsApp sem ter respondido a nenhum follow-up,
+    ou quando surge uma duvida que precisa de confirmacao humana agora
+    (ex: compatibilidade de maquina de outra marca).
     Nunca levanta exceção -- falha aqui não pode travar o loop.
     """
     phone_clean = _normalizar_phone(phone)
@@ -302,7 +304,10 @@ async def _transferir_para_agente(phone: str) -> bool:
         finally:
             db.close()
 
-        ok = await criar_lead_no_pipeline(phone_clean, nome=nome, finalizado=True)
+        ok = await criar_lead_no_pipeline(
+            phone_clean, nome=nome, finalizado=True,
+            resumo=resumo or "Handoff automatico -- sem resumo especifico registrado.",
+        )
         logger.info(
             "[FOLLOWUP] Handoff de %s para agente %s (card criado: %s)",
             phone_clean, agente_id, ok,

@@ -363,11 +363,14 @@ iguais entre si. NUNCA afirme que uma máquina é compatível sem saber o
 sistema de alimentação dela. Pergunte ao cliente como a tinta é
 alimentada na máquina dele (bag, cartucho com chip, cartucho sem chip)
 antes de confirmar se atendemos. Se não tiver certeza depois de
-perguntar, o sistema já aciona sozinho a transferência pra um agente
-técnico humano nesse momento -- você só precisa avisar o cliente que um
-especialista vai confirmar isso com ele em breve, sem prometer de forma
-vaga tipo "vou verificar depois" (isso já é feito de verdade, não é só
-retórica).
+perguntar, o sistema aciona sozinho a transferência pra um agente
+técnico humano -- mas isso só acontece se já soubermos o nome do
+cliente (o card precisa ter informação real, não pode chegar vazio pro
+agente). Se ainda não sabe o nome dele, pergunte primeiro (regra normal
+de qualificação); depois disso a transferência acontece automaticamente
+e você só precisa avisar o cliente que um especialista vai confirmar
+isso com ele em breve, sem prometer de forma vaga tipo "vou verificar
+depois" (isso já é feito de verdade, não é só retórica).
 
 PESQUISA DE CONCORRENTE, NUNCA VIOLE:
 Se o cliente mencionar um nome de fornecedor/concorrente que você não
@@ -1055,12 +1058,28 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
             # nao so promete no texto.
             _termos_compat = ["compat", "aceita", "serve", "bag", "cartucho", "chip", "alimenta"]
             if any(t in user_message.lower() for t in _termos_compat):
-                system_dinamico_compat_flag = True
-                try:
-                    from app.services.followup_service import _transferir_para_agente
-                    asyncio.create_task(_transferir_para_agente(phone))
-                except Exception as e:
-                    logger.error(f"Falha ao acionar handoff de compatibilidade: {e}")
+                # So aciona a transferencia de verdade se ja tivermos pelo
+                # menos o nome do cliente -- sem isso, o card chegaria pro
+                # agente humano tao vazio quanto uma promessa nao cumprida.
+                # Se ainda nao sabemos o nome, o Bruno primeiro pergunta
+                # (regra de qualificacao ja existente) antes de escalar --
+                # e a flag so vira True quando o handoff acontece de fato,
+                # senao ele diria "ja encaminhei" sem ter encaminhado nada.
+                if lead and lead.name:
+                    system_dinamico_compat_flag = True
+                    try:
+                        from app.services.followup_service import _transferir_para_agente
+                        resumo_compat = (
+                            f"Cliente perguntou sobre compatibilidade de maquina {marca_detectada.upper()} "
+                            f"com nossa tinta. Pergunta exata do cliente: \"{user_message[:300]}\". "
+                            f"Precisa confirmar sistema de alimentacao (bag/cartucho/chip) e compatibilidade real."
+                        )
+                        asyncio.create_task(_transferir_para_agente(phone, resumo=resumo_compat))
+                    except Exception as e:
+                        logger.error(f"Falha ao acionar handoff de compatibilidade: {e}")
+                        system_dinamico_compat_flag = False
+                else:
+                    system_dinamico_compat_flag = False
             else:
                 system_dinamico_compat_flag = False
         else:
