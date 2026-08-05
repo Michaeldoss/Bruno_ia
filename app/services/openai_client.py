@@ -726,6 +726,20 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
             Conversation.phone == phone, Conversation.role == "user"
         ).count()
 
+        # Detecta mensagem automatica repetida (ex: resposta de ausencia
+        # de outra empresa, tipo "Grafica X agradece seu contato...").
+        # Sem isso, o Bruno reconhecia na 1a vez que era mensagem
+        # automatica mas insistia do mesmo jeito na 2a, desperdicando um
+        # ciclo inteiro de follow-up numa conversa que claramente nao tem
+        # pessoa nenhuma respondendo ainda.
+        mensagem_repetida_identica = False
+        if historico_count > 0:
+            msg_anterior = db.query(Conversation).filter(
+                Conversation.phone == phone, Conversation.role == "user"
+            ).order_by(Conversation.id.desc()).first()
+            if msg_anterior and msg_anterior.content and msg_anterior.content.strip() == user_message.strip():
+                mensagem_repetida_identica = True
+
         campanha_ativa = None
         if historico_count == 0:
             campanha_ativa = detectar_campanha(user_message)
@@ -1197,6 +1211,17 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
 
         # ── Parte dinâmica (não cacheável) ────────────────────────────────
         system_dinamico = ""
+        if mensagem_repetida_identica:
+            system_dinamico += (
+                "\n\n[ALERTA: MENSAGEM AUTOMATICA REPETIDA] O texto que acabou de chegar e "
+                "IDENTICO ao que essa mesma conversa ja recebeu antes -- isso e forte sinal de "
+                "resposta automatica de ausencia de outra empresa (tipo 'fulano agradece seu "
+                "contato, retornaremos em breve'), nao uma pessoa real respondendo. NAO repita a "
+                "mesma pergunta de qualificacao de novo do mesmo jeito. Responda curto, reconhecendo "
+                "que parece ser mensagem automatica, e evite insistir com pergunta longa -- deixe a "
+                "porta aberta pra quando alguem de verdade responder, sem gastar esforco de "
+                "qualificacao numa mensagem que nao veio de uma pessoa."
+            )
         if customer_data:
             system_dinamico += f"\n\nCLIENTE IDENTIFICADO: {customer_data.get('nome')}."
         if debt_info:
