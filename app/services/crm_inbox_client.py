@@ -708,6 +708,59 @@ def start_crm_sync_worker():
     logger.info("[CRM Sync Worker] Task iniciada com sucesso.")
 
 
+_supabase_down_desde = None  # None = ok; datetime = desde quando esta fora
+
+async def _checar_saude_supabase():
+    """Health-check simples do Supabase, rodando junto do worker que ja
+    existe (sem processo novo). Se cair, avisa o Michael via WhatsApp na
+    hora -- em vez de so descobrir quando tenta usar o CRM e trava. Se
+    voltar, avisa que normalizou tambem, sem precisar ficar testando na
+    mao.
+    """
+    global _supabase_down_desde
+    from app.config import get_settings
+    from app.services.twilio_client import twilio_service
+    settings = get_settings()
+    ADMIN_PHONE = "+554797342869"  # Michael
+
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(
+                f"{settings.SUPABASE_URL}/rest/v1/",
+                headers={"apikey": settings.SUPABASE_SERVICE_ROLE_KEY},
+            )
+        esta_ok = r.status_code < 500
+    except Exception:
+        esta_ok = False
+
+    if not esta_ok and _supabase_down_desde is None:
+        _supabase_down_desde = datetime.utcnow()
+        logger.error("[Health Check] Supabase caiu -- avisando Michael.")
+        try:
+            await twilio_service.send_whatsapp_message(
+                ADMIN_PHONE,
+                "⚠️ Supabase (CRM) caiu agora. O Bruno continua vendendo "
+                "normal (nao depende disso), mas o CRM/pipeline vai ficar "
+                "sem sincronizar ate voltar. Nenhum lead se perde -- fica "
+                "na fila e sincroniza sozinho quando normalizar.",
+            )
+        except Exception as e:
+            logger.error(f"[Health Check] Falha ao avisar Michael: {e}")
+    elif esta_ok and _supabase_down_desde is not None:
+        duracao_min = int((datetime.utcnow() - _supabase_down_desde).total_seconds() / 60)
+        logger.info(f"[Health Check] Supabase voltou apos {duracao_min} min -- avisando Michael.")
+        try:
+            await twilio_service.send_whatsapp_message(
+                ADMIN_PHONE,
+                f"✅ Supabase (CRM) normalizou. Ficou fora do ar por cerca "
+                f"de {duracao_min} min. Tudo que ficou pendente ja esta "
+                f"sincronizando sozinho.",
+            )
+        except Exception as e:
+            logger.error(f"[Health Check] Falha ao avisar Michael: {e}")
+        _supabase_down_desde = None
+
+
 async def crm_sync_worker_loop():
     """Roda pra sempre em segundo plano, reprocessando mensagens que
     falharam a sincronizacao imediata. Nunca desiste de uma mensagem --
@@ -715,6 +768,7 @@ async def crm_sync_worker_loop():
     checar manualmente o que esta acontecendo."""
     while True:
         try:
+            await _checar_saude_supabase()
             db = SessionLocal()
             try:
                 pendentes = (
