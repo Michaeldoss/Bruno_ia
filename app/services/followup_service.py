@@ -19,7 +19,7 @@ from anthropic import AsyncAnthropic
 from app.config import get_settings
 from app.models.database import SessionLocal, LeadState, Conversation, Lead
 from app.services.twilio_client import twilio_service
-from app.services.crm_inbox_client import criar_lead_no_pipeline
+from app.services.crm_inbox_client import criar_lead_no_pipeline_com_retry as criar_lead_no_pipeline
 
 settings = get_settings()
 logger = logging.getLogger(__name__)

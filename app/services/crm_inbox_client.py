@@ -25,13 +25,14 @@ notar problema aqui.
 import asyncio
 import logging
 import re
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import httpx
 
 from app.config import get_settings
-from app.models.database import SessionLocal, CrmSyncQueue
+from app.models.database import SessionLocal, CrmSyncQueue, PipelineSyncQueue
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -620,6 +621,84 @@ async def log_message(
         logger.error(f"[CRM Inbox] Falha ao sincronizar na hora ({phone}), fica na fila pro worker: {e}")
 
 
+async def sync_lead_com_retry(function_name: str, **kwargs) -> dict:
+    """Wrapper com fila durável em volta de enviar_lead_crm/criar_lead_no_pipeline.
+
+    Mesma logica do CrmSyncQueue, mas pro card do pipeline em si: grava
+    a intencao no banco do Bruno ANTES de tentar (que quase nunca cai),
+    tenta sincronizar na hora, e se falhar (ex: apagao do Supabase),
+    deixa pendente pro worker reprocessar ate conseguir de verdade --
+    em vez de simplesmente perder o lead pra sempre.
+    """
+    db = SessionLocal()
+    try:
+        fila = PipelineSyncQueue(
+            function_name=function_name,
+            payload_json=json.dumps(kwargs, default=str),
+        )
+        db.add(fila)
+        db.commit()
+        db.refresh(fila)
+        fila_id = fila.id
+    except Exception as e:
+        logger.error(f"[Pipeline Sync] Falha ao gravar na fila (segue tentando direto): {e}")
+        fila_id = None
+    finally:
+        db.close()
+
+    try:
+        resultado = await _executar_sync_lead(function_name, kwargs)
+        if fila_id:
+            db = SessionLocal()
+            try:
+                row = db.query(PipelineSyncQueue).filter(PipelineSyncQueue.id == fila_id).first()
+                if row:
+                    row.synced = True
+                    row.synced_at = datetime.utcnow()
+                    db.commit()
+            finally:
+                db.close()
+        return resultado
+    except Exception as e:
+        logger.error(f"[Pipeline Sync] Falha ao sincronizar na hora, fica na fila pro worker: {e}")
+        return {"ok": False, "agent_name": None, "agent_phone": None}
+
+
+async def _executar_sync_lead(function_name: str, kwargs: dict):
+    """Chama a funcao real (enviar_lead_crm ou criar_lead_no_pipeline)."""
+    if function_name == "enviar_lead_crm":
+        from app.services.doss_crm_client import enviar_lead_crm
+        return await enviar_lead_crm(**kwargs)
+    elif function_name == "criar_lead_no_pipeline":
+        return await criar_lead_no_pipeline(**kwargs)
+    raise ValueError(f"Funcao desconhecida na fila de sync: {function_name}")
+
+
+
+
+
+async def enviar_lead_crm_com_retry(*args, **kwargs) -> dict:
+    """Drop-in pra enviar_lead_crm, mas com fila durável por baixo --
+    ver sync_lead_com_retry. Aceita os mesmos argumentos posicionais/
+    nomeados que a funcao original (escalate_to_human)."""
+    from app.services.doss_crm_client import escalate_to_human
+    import inspect
+    params = list(inspect.signature(escalate_to_human).parameters.keys())
+    merged = dict(zip(params, args))
+    merged.update(kwargs)
+    return await sync_lead_com_retry("enviar_lead_crm", **merged)
+
+
+async def criar_lead_no_pipeline_com_retry(*args, **kwargs) -> bool:
+    """Drop-in pra criar_lead_no_pipeline, com fila durável por baixo."""
+    import inspect
+    params = list(inspect.signature(criar_lead_no_pipeline).parameters.keys())
+    merged = dict(zip(params, args))
+    merged.update(kwargs)
+    resultado = await sync_lead_com_retry("criar_lead_no_pipeline", **merged)
+    return resultado if isinstance(resultado, bool) else resultado.get("ok", False)
+
+
 crm_sync_worker_task: asyncio.Task = None
 
 
@@ -661,6 +740,34 @@ async def crm_sync_worker_loop():
                         if item.attempts in (20, 50, 100):
                             logger.error(
                                 f"[CRM Sync Worker] Mensagem id={item.id} phone={item.phone} "
+                                f"ja falhou {item.attempts}x -- precisa de olho humano."
+                            )
+
+                # Mesmo ciclo, agora reprocessando cards de pipeline que
+                # falharam (ex: durante um apagao do Supabase) -- sem
+                # isso, um lead qualificado durante uma instabilidade
+                # externa era perdido pra sempre, silenciosamente.
+                pendentes_pipeline = (
+                    db.query(PipelineSyncQueue)
+                    .filter(PipelineSyncQueue.synced == False)  # noqa: E712
+                    .order_by(PipelineSyncQueue.created_at.asc())
+                    .limit(50)
+                    .all()
+                )
+                for item in pendentes_pipeline:
+                    try:
+                        kwargs = json.loads(item.payload_json)
+                        await _executar_sync_lead(item.function_name, kwargs)
+                        item.synced = True
+                        item.synced_at = datetime.utcnow()
+                        db.commit()
+                    except Exception as e:
+                        item.attempts = (item.attempts or 0) + 1
+                        item.last_error = str(e)[:500]
+                        db.commit()
+                        if item.attempts in (5, 20, 50):
+                            logger.error(
+                                f"[Pipeline Sync Worker] Card id={item.id} funcao={item.function_name} "
                                 f"ja falhou {item.attempts}x -- precisa de olho humano."
                             )
             finally:

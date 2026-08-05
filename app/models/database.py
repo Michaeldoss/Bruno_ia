@@ -117,6 +117,28 @@ class CrmSyncQueue(Base):
     id              = Column(Integer, primary_key=True, index=True)
     phone           = Column(String, index=True)
     content         = Column(Text)
+
+
+class PipelineSyncQueue(Base):
+    """Fila durável para criação/atualização de card no pipeline (CRM).
+
+    Mesmo problema que o CrmSyncQueue resolve pra mensagem, mas pro
+    card em si: se o Supabase/CRM cair no meio de uma tentativa de
+    handoff ou qualificação (ex: apagão do provedor, 04/08), a chamada
+    falhava e o lead era PERDIDO de vez -- nada tentava de novo depois.
+    Agora grava a intenção aqui primeiro, tenta na hora, e se falhar
+    fica pendente pro worker reprocessar ate conseguir de verdade.
+    """
+    __tablename__ = "pipeline_sync_queue"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    function_name = Column(String)   # 'enviar_lead_crm' ou 'criar_lead_no_pipeline'
+    payload_json  = Column(Text)     # argumentos serializados (json.dumps)
+    synced        = Column(Boolean, default=False)
+    attempts      = Column(Integer, default=0)
+    last_error    = Column(Text, nullable=True)
+    created_at    = Column(DateTime, default=datetime.datetime.utcnow)
+    synced_at     = Column(DateTime, nullable=True)
     is_from_contact = Column(Boolean, default=False)
     msg_type        = Column(String, default="text")
     media_url       = Column(String, nullable=True)

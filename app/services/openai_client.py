@@ -10,11 +10,12 @@ from app.config import get_settings
 from app.models.database import SessionLocal, Lead, Conversation, LeadState
 from app.services.uniplus_client import uniplus_service
 from app.services.sheets_client import sheets_service
-from app.services.doss_crm_client import enviar_lead_crm
+from app.services.doss_crm_client import enviar_lead_crm as _enviar_lead_crm_original
 from app.services.twilio_client import twilio_service
 from app.services.crm_inbox_client import (
     log_message as log_message_to_crm,
-    criar_lead_no_pipeline,
+    criar_lead_no_pipeline_com_retry as criar_lead_no_pipeline,
+    enviar_lead_crm_com_retry as enviar_lead_crm,
     buscar_memoria_ia,
 )
 from app.services.serasa_client import (
@@ -1027,7 +1028,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                 etapa_calculada = "Em Qualificação"
 
             try:
-                from app.services.crm_inbox_client import criar_lead_no_pipeline as _sync_incremental
+                from app.services.crm_inbox_client import criar_lead_no_pipeline_com_retry as _sync_incremental
                 asyncio.create_task(_sync_incremental(
                     phone,
                     nome=lead.name if tem_nome else None,

@@ -7,7 +7,7 @@ from app.services.buffer_service import message_buffer
 from app.core.media_catalog import MEDIA_CATALOG
 from app.services.followup_service import resetar_followup
 from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
-from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently, criar_lead_no_pipeline
+from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently, criar_lead_no_pipeline_com_retry as criar_lead_no_pipeline
 from app.models.database import SessionLocal, Lead, MediaSent, Conversation, LeadState
 from app.config import get_settings
 import logging
