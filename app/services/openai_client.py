@@ -960,7 +960,15 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         # real do cliente, nao uma palavra-chave) que ainda nao tem
         # extracao confiavel implementada. Nunca avanca sozinho ate
         # Fechado/Perdido -- isso continua sendo so acao humana no board.
-        if _qualificacao_mudou:
+        _tem_dado_qualificacao = bool(lead.name or lead.city or lead_state.produto_interesse or lead_state.email)
+        # FIX (04/08): antes so sincronizava quando algo mudava NESTE
+        # turno -- se o dado ja tinha sido capturado numa sessao de teste
+        # anterior (ex: mesma frase repetida em outro dia), a condicao
+        # "ainda nao tinha isso" ja era falsa e o card NUNCA chegava a
+        # ser criado, mesmo com produto/nome/cidade ja conhecidos havia
+        # tempo. Agora tambem sincroniza quando ja temos dado suficiente
+        # mas ainda nunca sincronizamos (ultima_sync_crm nulo).
+        if _tem_dado_qualificacao and (_qualificacao_mudou or not lead_state.ultima_sync_crm):
             origem_atual = get_origem_campanha(campanha_ativa) if campanha_ativa else "WhatsApp Direto"
             tem_nome = bool(lead.name and lead.name != phone)
             etapa_calculada = None
