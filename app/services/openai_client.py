@@ -1724,6 +1724,9 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                 "vou chamar nosso tecnico", "vou passar pro tecnico",
                 "vou passar para o tecnico", "vou confirmar com o tecnico",
                 "acionar nossa equipe tecnica", "verificar a viabilidade",
+                "vou encaminhar", "vou transferir", "consultor comercial",
+                "time comercial", "vendedor responsavel", "vendedor vai",
+                "consultor vai", "vou passar seus dados", "aciono o time",
             ])
         ):
             nome_soft = lead.name if (lead.name and lead.name != phone and len(lead.name) > 2) else phone
@@ -1780,11 +1783,13 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
             not despedida_detectada
             and lead_state.stage not in ("closed",)
             and not lead_state.card_id
-            and lead.name
-            and lead.name != phone
-            and len(str(lead.name).strip()) > 2
+            and (
+                (lead.name and lead.name != phone and len(str(lead.name).strip()) > 2)
+                or lead_state.cnpj or lead_state.email
+            )
             and sum(1 for m in messages if m.get("role") == "user") >= 3
         ):
+            nome_q = lead.name if (lead.name and lead.name != phone and len(str(lead.name).strip()) > 2) else phone
             historico_q = []
             for msg in messages[-10:]:
                 txt = str(msg.get("content", "")).strip()
@@ -1792,22 +1797,22 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                     historico_q.append(f"{'Cliente' if msg.get('role') == 'user' else 'Bruno'}: {txt[:250]}")
             resumo_q = (
                 "=== LEAD QUALIFICADO (Bruno ainda conversando) ===\n\n"
-                f"Cliente:  {lead.name}\nWhatsApp: {phone}\n"
+                f"Cliente:  {nome_q}\nWhatsApp: {phone}\n"
                 f"Cidade:   {lead.city or 'nao informada'}\n"
                 f"E-mail:   {lead_state.email or 'nao informado'}\n\n"
-                "Cliente se identificou e demonstrou interesse concreto. Card criado\n"
-                "retido para o lead nao se perder caso a conversa esfrie antes do\n"
-                "fechamento.\n\n"
+                "Cliente demonstrou interesse concreto (CNPJ/e-mail/produto). Card\n"
+                "criado retido para o lead nao se perder caso a conversa esfrie antes\n"
+                "do fechamento.\n\n"
                 "── CONVERSA (ultimas mensagens) ──\n" + "\n".join(historico_q)
             )
             resultado_q = await enviar_lead_crm(
-                phone, lead.name, resumo_q,
+                phone, nome_q, resumo_q,
                 cidade=lead.city or "", origem="Bruno IA", finalizado=False,
                 email=lead_state.email or None,
             )
             if not resultado_q.get("ok"):
                 await criar_lead_no_pipeline(
-                    phone, nome=lead.name, cidade=lead.city or None,
+                    phone, nome=nome_q, cidade=lead.city or None,
                     email=lead_state.email or None, resumo=resumo_q, finalizado=False,
                 )
 
