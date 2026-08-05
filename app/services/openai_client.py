@@ -69,6 +69,18 @@ logger = logging.getLogger(__name__)
 MODEL_HAIKU  = "claude-haiku-4-5-20251001"
 MODEL_SONNET = "claude-sonnet-4-6"
 
+CIDADES_BR = [
+    "joinville","jaragua do sul","blumenau","florianopolis","curitiba",
+    "sao paulo","porto alegre","itajai","brusque","balneario camboriu",
+    "chapeco","criciuma","lages","sao bento do sul","guaramirim",
+    "schroeder","araquari","mafra","campo alegre","garuva","massaranduba",
+    "belem","maraba","santarem","manaus","fortaleza","recife","salvador",
+    "natal","joao pessoa","maceio","aracaju","teresina","sao luis",
+    "goiania","brasilia","cuiaba","campo grande","rio de janeiro",
+    "belo horizonte","vitoria","campinas","ribeirao preto","londrina",
+    "maringa","cascavel","caxias do sul",
+]
+
 # ---------------------------------------------------------------------------
 # Roteamento simplificado:
 # - Tem histórico → sempre Sonnet (mantém contexto)
@@ -899,13 +911,21 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         if not lead.city:
             import re as _re_cidade
             cidade_match = _re_cidade.search(
-                r'(?:de|em|sou de|moro em|estou em|aqui em)\s+([A-Za-záàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+(?:\s+[A-Za-záàâãéèêíïóôõöúçñ]+)?)',
+                r'\b(?:sou de|moro em|estou em|aqui em|fico em)\s+([A-Za-záàâãéèêíïóôõöúçñÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+(?:\s+[A-Za-záàâãéèêíïóôõöúçñ]+)?)',
                 user_message, _re_cidade.IGNORECASE
             )
             if cidade_match:
                 cidade_detectada = cidade_match.group(1).strip()
-                if len(cidade_detectada) > 3:
-                    lead.city = cidade_detectada
+                # FIX: aceitar qualquer captura do regex sem checar contra
+                # lista real de cidades gerou lixo tipo "converter minha"
+                # sendo salvo como cidade (de "interesse em converter
+                # minha Epson"). Agora so aceita se bater com uma cidade
+                # conhecida de verdade (cobre nome composto tipo "Rio de
+                # Janeiro", nao so a primeira palavra).
+                cidade_lower = cidade_detectada.lower()
+                cidade_valida = next((c for c in CIDADES_BR if cidade_lower.startswith(c)), None)
+                if cidade_valida:
+                    lead.city = cidade_valida.title()
                     db.commit()
                     _qualificacao_mudou = True
 
@@ -1416,17 +1436,6 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
 
                 cidade_lead = lead.city or ""
                 if not cidade_lead:
-                    CIDADES_BR = [
-                        "joinville","jaragua do sul","blumenau","florianopolis","curitiba",
-                        "sao paulo","porto alegre","itajai","brusque","balneario camboriu",
-                        "chapeco","criciuma","lages","sao bento do sul","guaramirim",
-                        "schroeder","araquari","mafra","campo alegre","garuva","massaranduba",
-                        "belem","maraba","santarem","manaus","fortaleza","recife","salvador",
-                        "natal","joao pessoa","maceio","aracaju","teresina","sao luis",
-                        "goiania","brasilia","cuiaba","campo grande","rio de janeiro",
-                        "belo horizonte","vitoria","campinas","ribeirao preto","londrina",
-                        "maringa","cascavel","caxias do sul",
-                    ]
                     import re as _re_cid
                     conv_raw = " ".join(
                         str(m.get("content","")) for m in messages
