@@ -25,6 +25,27 @@ settings = get_settings()
 
 _processed_sids: set = set()
 
+# FIX: asyncio.create_task(...) sem guardar a referencia da task e um
+# risco conhecido do Python -- se o garbage collector rodar antes da
+# task terminar, ela pode ser destruida no meio da execucao, sem log
+# nenhum (nem cai no try/except de dentro de log_message, porque a task
+# em si nunca chega a rodar ate o fim). Investigando um apagao real do
+# espelhamento pro CRM (mensagens sumindo do Inbox por ~24h sem erro
+# visivel), esse era um dos suspeitos -- silencioso por natureza,
+# dificil de provar depois do fato. Corrigido mantendo referencia viva
+# de toda task em segundo plano ate ela terminar.
+_background_tasks: set = set()
+
+
+def fire_and_forget(coro):
+    """Substitui asyncio.create_task(...) direto -- mesma semantica de
+    'dispara e nao espera', mas guarda a referencia da task ate ela
+    terminar, evitando que o garbage collector mate ela no meio."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 
 def _is_duplicate(message_sid: str) -> bool:
     if message_sid in _processed_sids:
@@ -264,21 +285,21 @@ async def handle_async_response(
         if lead_state and lead_state.stage == "closed":
             if not already_mirrored:
                 if user_message:
-                    asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
+                    fire_and_forget(log_message_to_crm(phone, user_message, is_from_contact=True))
                 elif audio_url and content_type and "audio" in content_type:
                     transcription = await transcribe_audio(audio_url)
                     if transcription:
-                        asyncio.create_task(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
+                        fire_and_forget(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
             return
 
         if await human_active_recently(phone):
             if not already_mirrored:
                 if user_message:
-                    asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
+                    fire_and_forget(log_message_to_crm(phone, user_message, is_from_contact=True))
                 elif audio_url and content_type and "audio" in content_type:
                     transcription = await transcribe_audio(audio_url)
                     if transcription:
-                        asyncio.create_task(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
+                        fire_and_forget(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
             return
 
         lead = db.query(Lead).filter(Lead.phone == phone).first()
@@ -320,7 +341,7 @@ async def handle_async_response(
             return
 
         if not already_mirrored:
-            asyncio.create_task(log_message_to_crm(phone, user_message, is_from_contact=True))
+            fire_and_forget(log_message_to_crm(phone, user_message, is_from_contact=True))
 
         response_chunks = await process_message_with_assistant(thread_id, user_message)
         first_message = True
@@ -329,7 +350,7 @@ async def handle_async_response(
                 await asyncio.sleep(3.0)
             await asyncio.sleep(get_typing_delay(chunk))
             await twilio_service.send_whatsapp_message(phone, chunk)
-            asyncio.create_task(log_message_to_crm(phone, chunk, is_from_contact=False))
+            fire_and_forget(log_message_to_crm(phone, chunk, is_from_contact=False))
             first_message = False
 
         texto_combinado = (user_message or "") + " " + " ".join(response_chunks)
@@ -360,7 +381,7 @@ async def handle_async_response(
                     await asyncio.sleep(2.0)
                     if media.get("image"):
                         await twilio_service.send_whatsapp_message(phone, media_url=media["image"])
-                        asyncio.create_task(log_message_to_crm(
+                        fire_and_forget(log_message_to_crm(
                             phone,
                             f"[imagem] {product_key}",
                             is_from_contact=False,
@@ -371,7 +392,7 @@ async def handle_async_response(
 
                     if media.get("video"):
                         await twilio_service.send_whatsapp_message(phone, media_url=media["video"])
-                        asyncio.create_task(log_message_to_crm(
+                        fire_and_forget(log_message_to_crm(
                             phone,
                             f"[video] {product_key}",
                             is_from_contact=False,
