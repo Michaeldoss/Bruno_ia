@@ -117,6 +117,16 @@ class CrmSyncQueue(Base):
     id              = Column(Integer, primary_key=True, index=True)
     phone           = Column(String, index=True)
     content         = Column(Text)
+    is_from_contact = Column(Boolean, default=False)
+    msg_type        = Column(String, default="text")
+    media_url       = Column(String, nullable=True)
+    whatsapp_id     = Column(String, nullable=True)
+    nome            = Column(String, nullable=True)
+    synced          = Column(Boolean, default=False, index=True)
+    attempts        = Column(Integer, default=0)
+    last_error      = Column(Text, nullable=True)
+    created_at      = Column(DateTime, default=datetime.datetime.utcnow)
+    synced_at       = Column(DateTime, nullable=True)
 
 
 class PipelineSyncQueue(Base):
@@ -139,16 +149,6 @@ class PipelineSyncQueue(Base):
     last_error    = Column(Text, nullable=True)
     created_at    = Column(DateTime, default=datetime.datetime.utcnow)
     synced_at     = Column(DateTime, nullable=True)
-    is_from_contact = Column(Boolean, default=False)
-    msg_type        = Column(String, default="text")
-    media_url       = Column(String, nullable=True)
-    whatsapp_id     = Column(String, nullable=True)
-    nome            = Column(String, nullable=True)
-    synced          = Column(Boolean, default=False, index=True)
-    attempts        = Column(Integer, default=0)
-    last_error      = Column(Text, nullable=True)
-    created_at      = Column(DateTime, default=datetime.datetime.utcnow)
-    synced_at       = Column(DateTime, nullable=True)
 
 
 class UsageLog(Base):
@@ -193,3 +193,27 @@ def _add_column_if_missing(table: str, col_name: str, col_type: str):
 
 _add_column_if_missing("usage_logs", "servico", "VARCHAR DEFAULT 'anthropic'")
 _add_column_if_missing("usage_logs", "quantidade", "FLOAT DEFAULT 0.0")
+
+# FIX: essas colunas foram adicionadas no modelo Python (CrmSyncQueue e
+# PipelineSyncQueue) mas nunca migradas de verdade pra tabela do
+# Postgres em producao -- create_all() so cria tabela nova, nao altera
+# tabela existente. Resultado: toda tentativa de gravar na fila
+# durável quebrava com "invalid keyword argument" / "has no attribute",
+# silenciosamente, e NENHUMA mensagem do Bruno chegava a ser
+# espelhada no CRM (nem direto, nem via retry) por quase 24h.
+_add_column_if_missing("crm_sync_queue", "is_from_contact", "BOOLEAN DEFAULT false")
+_add_column_if_missing("crm_sync_queue", "msg_type", "VARCHAR DEFAULT 'text'")
+_add_column_if_missing("crm_sync_queue", "media_url", "VARCHAR")
+_add_column_if_missing("crm_sync_queue", "whatsapp_id", "VARCHAR")
+_add_column_if_missing("crm_sync_queue", "nome", "VARCHAR")
+_add_column_if_missing("crm_sync_queue", "synced", "BOOLEAN DEFAULT false")
+_add_column_if_missing("crm_sync_queue", "attempts", "INTEGER DEFAULT 0")
+_add_column_if_missing("crm_sync_queue", "last_error", "TEXT")
+_add_column_if_missing("crm_sync_queue", "created_at", "TIMESTAMP")
+_add_column_if_missing("crm_sync_queue", "synced_at", "TIMESTAMP")
+
+_add_column_if_missing("pipeline_sync_queue", "synced", "BOOLEAN DEFAULT false")
+_add_column_if_missing("pipeline_sync_queue", "attempts", "INTEGER DEFAULT 0")
+_add_column_if_missing("pipeline_sync_queue", "last_error", "TEXT")
+_add_column_if_missing("pipeline_sync_queue", "created_at", "TIMESTAMP")
+_add_column_if_missing("pipeline_sync_queue", "synced_at", "TIMESTAMP")
