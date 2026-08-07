@@ -18,6 +18,20 @@ from app.services.crm_inbox_client import (
     enviar_lead_crm_com_retry as enviar_lead_crm,
     buscar_memoria_ia,
 )
+
+# FIX: 3 pontos nesse arquivo usavam asyncio.create_task(...) direto,
+# sem guardar referencia -- mesmo risco ja corrigido hoje em varios
+# outros arquivos (garbage collector pode matar a task no meio, sem
+# log nenhum). Helper local pra nao depender de import cruzado com
+# webhooks.py (que importa DESSE arquivo, nao o contrario).
+_background_tasks: set = set()
+
+
+def _fire_and_forget(coro):
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 from app.services.serasa_client import (
     consultar_cnpj as serasa_consultar,
     format_serasa_summary, get_regime_serasa,
@@ -1069,7 +1083,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
 
             try:
                 from app.services.crm_inbox_client import criar_lead_no_pipeline_com_retry as _sync_incremental
-                asyncio.create_task(_sync_incremental(
+                _fire_and_forget(_sync_incremental(
                     phone,
                     nome=lead.name if tem_nome else None,
                     cidade=lead.city or None,
@@ -1272,7 +1286,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                             f"com nossa tinta. Pergunta exata do cliente: \"{user_message[:300]}\". "
                             f"Precisa confirmar sistema de alimentacao (bag/cartucho/chip) e compatibilidade real."
                         )
-                        asyncio.create_task(_transferir_para_agente(phone, resumo=resumo_compat))
+                        _fire_and_forget(_transferir_para_agente(phone, resumo=resumo_compat))
                     except Exception as e:
                         logger.error(f"Falha ao acionar handoff de compatibilidade: {e}")
                         system_dinamico_compat_flag = False
@@ -1836,7 +1850,7 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                             )
                             await asyncio.sleep(2.0)
                             await twilio_service.send_whatsapp_message(phone, aviso)
-                            asyncio.create_task(log_message_to_crm(phone, aviso, is_from_contact=False))
+                            _fire_and_forget(log_message_to_crm(phone, aviso, is_from_contact=False))
                     else:
                         logger.error(f"[ARCCA] FALHA ao criar card para {phone} -- lead perdido, verificar Doss CRM")
                 await _criar_card()

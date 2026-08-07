@@ -29,7 +29,7 @@ class TwilioClient:
             if not to_phone.startswith("whatsapp:+"):
                 to_phone = to_phone.replace("whatsapp:", "whatsapp:+")
 
-            logger.error(f">>> DEBUG TWILIO: Enviando de [{from_phone}] para [{to_phone}]")
+            logger.debug(f"Enviando WhatsApp de [{from_phone}] para [{to_phone}]")
 
             params = {
                 "from_": from_phone,
@@ -47,7 +47,19 @@ class TwilioClient:
 
             return message.sid
         except Exception as e:
+            # FIX: engolia a excecao aqui (so logava, sem raise) --
+            # diferente de send_whatsapp_template_message logo abaixo,
+            # que ja propaga corretamente. Quase nenhum call site checa
+            # o valor de retorno (None em sucesso-stub E em falha real
+            # sao indistinguveis), entao uma falha de envio de verdade
+            # (numero invalido, hiccup da Twilio) era tratada como
+            # sucesso por quem chamou -- no follow-up, por exemplo, o
+            # contador de step avancava e o registro ficava gravado
+            # como "enviado" mesmo o cliente nunca tendo recebido nada.
+            # Todo call site ja roda dentro de try/except em nivel de
+            # loop/requisicao, entao propagar aqui e seguro.
             logger.error(f"Erro ao enviar mensagem via Twilio: {e}")
+            raise
 
     async def send_whatsapp_template_message(self, to: str, content_sid: str, content_variables: dict):
         """
