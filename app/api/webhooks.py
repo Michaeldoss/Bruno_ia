@@ -320,7 +320,7 @@ async def handle_async_response(
             # chamadas mais pra frente na conversa (qualificacao,
             # fechamento) so ATUALIZAM esse mesmo card -- nunca duplica,
             # ja que a funcao busca por conversa/contato antes de criar.
-            asyncio.create_task(criar_lead_no_pipeline(
+            fire_and_forget(criar_lead_no_pipeline(
                 phone, nome=None, cidade=None, email=None,
                 resumo="Primeiro contato recebido -- ainda em atendimento.",
                 finalizado=False,
