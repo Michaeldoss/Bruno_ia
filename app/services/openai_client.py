@@ -974,7 +974,17 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                     )
 
 
-                db.add(Conversation(phone=phone, role="user", content=user_message))
+                # FIX: 'user_message' era salvo aqui E DE NOVO logo
+                # abaixo (fora desse bloco, incondicional) -- toda vez
+                # que o CNPJ era consultado com sucesso ou nao
+                # encontrado na Serasa, a mensagem do cliente entrava
+                # duplicada no historico. Alem de poluir o contexto que
+                # vai pro modelo, inflava a contagem de mensagem que a
+                # trava de handoff usa (engajamento_mensagens), fazendo
+                # ela liberar "mais rapido" do que deveria de verdade.
+                # So o contexto do sistema precisa ser salvo aqui -- a
+                # mensagem do cliente ja e salva pela linha incondicional
+                # logo abaixo, uma unica vez.
                 db.add(Conversation(phone=phone, role="user", content=cnpj_context))
                 db.commit()
 
