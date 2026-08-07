@@ -8,13 +8,47 @@ from anthropic import AsyncAnthropic
 logger = logging.getLogger(__name__)
 
 MARCAS_CONCORRENTES = [
+    # Fabricantes multinacionais
     "mimaki", "roland", "epson", "mutoh", "brother",
     "hp latex", "ricoh", "xuli", "flora", "infiniti", "allwin",
-    # FIX: faltavam concorrentes diretos brasileiros de tinta/impressora
-    # sublimatica e DTF -- o mesmo mercado da Doss. "Fabrijet" e o caso
-    # documentado (cliente mencionou, Bruno nao reconheceu nem pesquisou)
-    # -- concorrente real, sediado em Itajaí/SC, bem perto da Doss.
-    "fabrijet", "sublimpel", "gênesis", "genesis", "sublitop",
+    "marabu", "sun chemical", "dupont artistri", "artistri",
+
+    # FIX (07/08): lista expandida a partir de mapeamento real de mercado
+    # -- 60 concorrentes/similares levantados (Manus AI, mar/2026).
+    # Antes so tinha as multinacionais grandes -- faltava praticamente
+    # todo o mercado nacional, que e onde o cliente da Doss realmente
+    # compara preco no dia a dia. "Fabrijet" foi o caso documentado que
+    # expos essa lacuna.
+    #
+    # IMPORTANTE: "Sun Special" NAO entra aqui -- e importador de
+    # maquina DA PROPRIA Doss, nao concorrente (confirmado por Michael
+    # 07/08). Se aparecer, e fornecedor, nao dispara pesquisa de
+    # concorrente.
+
+    # Fabricantes nacionais de tinta
+    "gênesis", "genesis", "fremplast", "acn química", "acn quimica",
+    "saturno", "stellar auroraink", "fabrijet",
+
+    # Distribuidores/importadores de tinta
+    "bluecolor", "bm do brasil", "bordeaux", "tegape",
+    "nova silk", "jetbest", "inktec", "inknet", "fattu", "at inks",
+    "sublimaink", "sublivix", "nasus ink", "brprints", "pampa tech",
+    "fenix importação", "fenix suprimentos", "avante printer",
+    "supriloja", "magna tech",
+
+    # Equipamentos
+    "headsign", "arkom", "digifoil", "br group", "firejet", "teknova",
+    "inprint digital", "km brasil", "nocai", "ess do brasil",
+    "electronic sign supply", "sc mídia", "sc midia", "dsi sistemas",
+    "suplinet", "eprinters", "rocketjet", "docan", "sp plotter",
+    "xinflying", "brasil dtf", "puracor",
+
+    # Distribuidores completos e regionais
+    "grupo bloom", "nexum", "sanju papéis", "sanju papeis",
+    "brasko", "mecolour", "comprint", "gemir", "cogra distribuidora",
+    "comercial paulista", "paulista sign", "sign brasil",
+    "ponto da sublimação", "ponto da sublimacao", "sublima brasil",
+    "sulblimaq", "mundial imports", "unica brasil transfer", "tele silk",
 ]
 
 TRIGGERS_TECNICOS = [
