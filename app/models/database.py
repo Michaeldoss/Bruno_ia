@@ -68,6 +68,21 @@ class LeadState(Base):
     stage = Column(String, default="active")
     # Estágios: active | awaiting_cnpj | cnpj_received | closed | followup_closed
 
+    # ── Etapas do fluxo de vendas realmente cumpridas ──────────────────────
+    # Antes so existia a INSTRUCAO no prompt pra seguir a ordem (receber ->
+    # entender -> apresentar Doss -> apresentar produto -> ROI -> info da
+    # empresa -> qualificar -> negociar -> fechar). Nada verificava se isso
+    # de fato aconteceu -- so contava quantidade de mensagem. Um cliente
+    # podia trocar 3 mensagens sobre qualquer coisa e o handoff liberava do
+    # mesmo jeito, sem nunca ter apresentado produto ou calculado ROI.
+    # Detectado PASSIVAMENTE no texto que o Bruno mesmo ja gera -- nao exige
+    # pergunta direta nem resposta obrigatoria do cliente, pra nao virar
+    # interrogatorio repetitivo.
+    doss_apresentada   = Column(Boolean, default=False)
+    produto_apresentado = Column(Boolean, default=False)
+    roi_apresentado     = Column(Boolean, default=False)
+    dor_identificada    = Column(Boolean, default=False)
+
     # ── Dados coletados ────────────────────────────────────────────────────
     cnpj      = Column(String, nullable=True)
     cnpj_data = Column(Text,   nullable=True)
@@ -217,3 +232,8 @@ _add_column_if_missing("pipeline_sync_queue", "attempts", "INTEGER DEFAULT 0")
 _add_column_if_missing("pipeline_sync_queue", "last_error", "TEXT")
 _add_column_if_missing("pipeline_sync_queue", "created_at", "TIMESTAMP")
 _add_column_if_missing("pipeline_sync_queue", "synced_at", "TIMESTAMP")
+
+_add_column_if_missing("lead_states", "doss_apresentada", "BOOLEAN DEFAULT false")
+_add_column_if_missing("lead_states", "produto_apresentado", "BOOLEAN DEFAULT false")
+_add_column_if_missing("lead_states", "roi_apresentado", "BOOLEAN DEFAULT false")
+_add_column_if_missing("lead_states", "dor_identificada", "BOOLEAN DEFAULT false")

@@ -291,6 +291,15 @@ quando fizer sentido no fluxo (ex: perguntar cidade de novo quando o
 assunto de logística ou visita técnica surgir naturalmente). Qualificar
 é ir mediando aos poucos, não interrogatório.
 
+Essa regra vale IGUAL pras etapas do fluxo obrigatório acima (Doss,
+produto, ROI, dor do cliente). Você não "precisa" fazer o cliente
+confirmar cada etapa uma por uma -- é um vendedor de verdade
+conversando, contornando resistência, não uma lista de campos de
+formulário sendo preenchida em ordem. Se o cliente não quer falar de
+ROI agora, tudo bem, você segue o assunto que ele trouxe e volta pra
+isso mais tarde, de um jeito diferente -- nunca repetindo a mesma
+pergunta com as mesmas palavras.
+
 SEJA CONSULTOR E CLOSER, NÃO SÓ CALCULADORA, NUNCA VIOLE:
 Antes de virar números e fechamento, seja descontraído e curioso de
 verdade sobre o cliente: o público dele, as dificuldades que ele tem
@@ -1409,6 +1418,40 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
 
         reply_lower = reply_text.lower()
 
+        # ── Rastreio passivo das etapas do fluxo de vendas ────────────────
+        # Detecta pelo que o Bruno e o cliente ja disseram na conversa
+        # normal -- NUNCA pergunta direto "você quer saber sobre a Doss?"
+        # nem exige resposta especifica. Se ele naturalmente cobriu o
+        # assunto, marca. Se o cliente desviar de um topico, tudo bem,
+        # a conversa segue (ver regra "COMO PERGUNTAR SEM SER CHATO" no
+        # prompt) -- isso so registra o que ja aconteceu, nao forca nada.
+        if not lead_state.doss_apresentada and any(kw in reply_lower for kw in [
+            "garantia", "suporte técnico", "suporte da doss", "consistência",
+            "aqui na doss", "nosso suporte", "nossa garantia", "opção certa",
+        ]):
+            lead_state.doss_apresentada = True
+
+        if not lead_state.produto_apresentado and any(kw in reply_lower for kw in [
+            "dgtex", "dgeco", "dtf", "uv flex", "f6370", "f6200", "f6070",
+            "f9470", "1801i", "1802i", "modelo", "conversão",
+        ]):
+            lead_state.produto_apresentado = True
+
+        if not lead_state.roi_apresentado and any(kw in reply_lower for kw in [
+            "payback", "se paga", "margem extra", "retorno", "economia",
+            "custo por m²", "seu custo fica", "paga em", "compensa",
+        ]):
+            lead_state.roi_apresentado = True
+
+        if not lead_state.dor_identificada and any(kw in user_lower for kw in [
+            "caro", "perco", "perdendo", "demora", "problema", "difícil",
+            "terceiriz", "gasto muito", "trava", "atrasa", "ruim",
+            "não confio", "sem suporte", "sem garantia", "concorrente",
+        ]):
+            lead_state.dor_identificada = True
+
+        db.commit()
+
         # ── Detecção de despedida expandida para o Arcca ─────────────────
         despedida_detectada = any(kw in reply_lower for kw in [
             "passei seus dados para nosso time comercial",
@@ -1470,11 +1513,27 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         # (07/08): cliente mandou 1 mensagem, Bruno pediu o modelo da
         # maquina, e o card ja nasceu fechado e entregue pro vendedor no
         # mesmo segundo -- sem esperar a resposta nem negociar nada.
+        # FIX: exige quantidade minima de mensagem (piso contra handoff
+        # imediato) E que pelo menos 2 das 4 etapas de substancia real
+        # tenham acontecido de fato -- nao so trocar mensagem, mas ter
+        # coberto conteudo de venda de verdade (Doss, produto, ROI ou dor
+        # do cliente). Nao exige as 4 -- cliente pode desviar de um
+        # assunto e a conversa segue sem travar por causa disso.
         engajamento_mensagens = sum(1 for m in messages if m.get("role") == "user")
-        if despedida_detectada and lead_state.stage not in ("closed",) and engajamento_mensagens < 3:
+        etapas_substancia = sum([
+            bool(lead_state.doss_apresentada),
+            bool(lead_state.produto_apresentado),
+            bool(lead_state.roi_apresentado),
+            bool(lead_state.dor_identificada),
+        ])
+        if despedida_detectada and lead_state.stage not in ("closed",) and (
+            engajamento_mensagens < 3
+            or (etapas_substancia < 2 and engajamento_mensagens < 8)
+        ):
             logger.warning(
-                f"[ARCCA] Handoff forte bloqueado para {phone}: so {engajamento_mensagens} "
-                "mensagem(ns) do cliente, sem negociacao real ainda."
+                f"[ARCCA] Handoff forte bloqueado para {phone}: "
+                f"{engajamento_mensagens} mensagem(ns), {etapas_substancia}/4 etapas de substancia -- "
+                "sem negociacao real suficiente ainda."
             )
             despedida_detectada = False
 
