@@ -64,7 +64,14 @@ def utcnow() -> datetime:
 
 
 def esta_em_horario_comercial(agora: Optional[datetime] = None) -> bool:
-    atual = (agora or agora_brasilia()).time()
+    # FIX: so checava a HORA (8h-12h, 13h30-18h) -- nunca checava o DIA
+    # DA SEMANA. Regra de negocio documentada e segunda a sexta; sem
+    # essa checagem, follow-up podia disparar normalmente no sabado e
+    # domingo, direto na janela de horario comercial de um dia util.
+    momento = agora or agora_brasilia()
+    if momento.weekday() >= 5:  # 5=sabado, 6=domingo
+        return False
+    atual = momento.time()
     return any(inicio <= atual <= fim for inicio, fim in JANELAS_COMERCIAIS)
 
 
