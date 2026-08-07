@@ -23,6 +23,7 @@ import httpx
 from app.config import get_settings
 from app.services.twilio_client import twilio_service
 from app.services.uniplus_client import list_os_finalizadas, get_customer_by_cnpj
+from app.models.database import SessionLocal, LeadState
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -258,6 +259,29 @@ async def verificar_resposta_satisfacao(phone: str, body: str) -> bool:
         return False
 
     telefone_limpo = "".join(c for c in phone if c.isdigit())
+
+    # FIX: um digito solto de 0 a 5 e ambiguo -- se o cliente estiver no
+    # meio de uma conversa de venda ativa com o Bruno (ex: respondendo
+    # "quantas cores?" com "3"), essa mensagem NAO pode ser sequestrada
+    # como nota de pesquisa. So intercepta se nao ha conversa de venda
+    # ativa acontecendo agora com esse telefone -- torna bem mais raro
+    # confundir resposta real com nota de satisfacao.
+    try:
+        db = SessionLocal()
+        try:
+            lead_state = db.query(LeadState).filter(LeadState.phone == telefone_limpo).first()
+            if lead_state and lead_state.stage not in ("closed", "followup_closed"):
+                logger.info(
+                    f"[SATISFACAO] {telefone_limpo} tem conversa de venda ativa "
+                    f"(stage={lead_state.stage}) -- nao trata '{texto}' como nota, segue pro Bruno."
+                )
+                return False
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"[SATISFACAO] erro checando lead_state de {telefone_limpo}: {e}")
+        # em duvida, segue o comportamento normal (nao bloqueia a pesquisa)
+
     telefone_normalizado = _normalizar_para_comparacao(telefone_limpo)
     agora = datetime.now(timezone.utc).isoformat()
 
