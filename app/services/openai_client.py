@@ -197,6 +197,37 @@ IDENTIDADE:
 Você não é um atendente. Você é um especialista em negócios de impressão digital, comunicação visual e brindes. Fala a língua do empreendedor, sem saber o ramo do cliente antes de perguntar.
 Você está fisicamente na Matriz da Doss Group que fica em Joinville, Santa Catarina. Nunca diga que está em São Paulo ou em outro lugar.
 
+════════════════════════════════════════════════════════
+📋 FLUXO OBRIGATÓRIO DA CONVERSA, NUNCA PULE ETAPA
+════════════════════════════════════════════════════════
+Toda conversa de venda de verdade passa por essas etapas, nessa ordem.
+Não são perguntas de formulário — cada uma acontece naturalmente,
+intercalada, ao longo de várias mensagens. Mas a ORDEM importa: você
+nunca fecha/passa pro time comercial sem ter passado pelas etapas de
+negociação de verdade antes.
+
+1. RECEBA — cumprimente, se identifique como Bruno da Doss Group
+2. ENTENDA — descubra o que o cliente precisa, sem assumir o ramo dele
+3. EXTRAIA DADOS — nome, e ao longo da conversa: cidade, ramo, CNPJ
+4. APRESENTE A DOSS — por que a Doss é a escolha certa (garantia, suporte, consistência técnica)
+5. APRESENTE O PRODUTO — o modelo/solução certa pro caso dele, com dados técnicos reais
+6. SIMULE ROI — custo atual dele vs custo com a Doss, payback, margem
+7. INFORMAÇÕES DA EMPRESA — volume de produção, ticket médio, máquina/fornecedor atual, dor real
+8. QUALIFIQUE — CNPJ, capacidade de investimento, urgência real
+9. NEGOCIE — contorne objeção, ajuste condição, mostre valor antes de baixar preço
+10. FECHE — cliente confirma interesse real em avançar (não é só "responder uma pergunta")
+11. PASSE PRO AGENTE — só depois de tudo acima, nunca antes
+
+REGRA DURA: você NUNCA finaliza a conversa ou passa pro time comercial
+depois de só 1 ou 2 mensagens, mesmo que o cliente pareça decidido
+rápido. "Tenho interesse em converter minha Epson" é abertura de venda,
+não motivo pra já encaminhar — é o sinal pra você COMEÇAR o fluxo
+acima, não pra pular direto pro fim. Se o cliente insistir "só me
+manda pro vendedor" antes de você conseguir negociar nada, aí sim pode
+encaminhar mais cedo — mas por escolha explícita do cliente, não por
+iniciativa sua.
+════════════════════════════════════════════════════════
+
 TOM E ESTILO:
 - Mensagens curtas: máximo 3 linhas por mensagem
 - Sem emojis
@@ -1427,6 +1458,25 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
             # normalmente, com mais argumentacao, seguindo o fluxo
             # natural da conversa (o prompt principal ja orienta a
             # contornar objecao antes de desistir).
+
+        # FIX: esse gatilho (handoff forte -- fecha e passa pro agente)
+        # nao tinha nenhum piso minimo de engajamento, diferente do
+        # gatilho de "card por qualificacao" mais abaixo (que exige
+        # pelo menos 3 mensagens do cliente). Bastava a resposta do
+        # Bruno conter uma frase tipo "vou encaminhar pro time" -- e
+        # isso podia acontecer logo na PRIMEIRA resposta da conversa,
+        # sem nenhuma negociacao real: sem produto apresentado, sem ROI,
+        # sem dado da empresa, sem qualificacao. Confirmado em producao
+        # (07/08): cliente mandou 1 mensagem, Bruno pediu o modelo da
+        # maquina, e o card ja nasceu fechado e entregue pro vendedor no
+        # mesmo segundo -- sem esperar a resposta nem negociar nada.
+        engajamento_mensagens = sum(1 for m in messages if m.get("role") == "user")
+        if despedida_detectada and lead_state.stage not in ("closed",) and engajamento_mensagens < 3:
+            logger.warning(
+                f"[ARCCA] Handoff forte bloqueado para {phone}: so {engajamento_mensagens} "
+                "mensagem(ns) do cliente, sem negociacao real ainda."
+            )
+            despedida_detectada = False
 
         if despedida_detectada and lead_state.stage not in ("closed",):
             # card_id: 1 = card criado mas RETIDO (sem dono), 2 = ja entregue
