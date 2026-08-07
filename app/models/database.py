@@ -82,6 +82,15 @@ class LeadState(Base):
     produto_apresentado = Column(Boolean, default=False)
     roi_apresentado     = Column(Boolean, default=False)
     dor_identificada    = Column(Boolean, default=False)
+    # FIX (07/08, 2a rodada): o proprio prompt exige uma lista de 10
+    # itens antes de liberar a frase de fechamento (nome, cidade,
+    # produto, preco, duvida tecnica, parque de maquinas, tintas,
+    # email, telefone, CNPJ) -- a trava de codigo (4 sinais) ficava
+    # mais fraca que essa exigencia do proprio prompt. nome/cidade/
+    # email/cnpj/produto ja tem campo proprio (Lead.name, Lead.city,
+    # email, cnpj, produto_interesse) -- so faltavam esses dois:
+    preco_discutido        = Column(Boolean, default=False)
+    parque_tintas_mapeado  = Column(Boolean, default=False)
 
     # ── Dados coletados ────────────────────────────────────────────────────
     cnpj      = Column(String, nullable=True)
@@ -237,3 +246,5 @@ _add_column_if_missing("lead_states", "doss_apresentada", "BOOLEAN DEFAULT false
 _add_column_if_missing("lead_states", "produto_apresentado", "BOOLEAN DEFAULT false")
 _add_column_if_missing("lead_states", "roi_apresentado", "BOOLEAN DEFAULT false")
 _add_column_if_missing("lead_states", "dor_identificada", "BOOLEAN DEFAULT false")
+_add_column_if_missing("lead_states", "preco_discutido", "BOOLEAN DEFAULT false")
+_add_column_if_missing("lead_states", "parque_tintas_mapeado", "BOOLEAN DEFAULT false")

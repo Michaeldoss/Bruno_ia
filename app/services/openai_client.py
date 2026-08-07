@@ -1464,6 +1464,19 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         ]):
             lead_state.dor_identificada = True
 
+        if not lead_state.preco_discutido and any(kw in reply_lower for kw in [
+            "r$", "entrada de", "parcelamento", "à vista", "a vista",
+            "boleto", "condição de pagamento", "condicao de pagamento",
+        ]):
+            lead_state.preco_discutido = True
+
+        if not lead_state.parque_tintas_mapeado and any(kw in user_lower for kw in [
+            "uso hoje", "minha máquina", "minha maquina", "tenho uma",
+            "tenho um", "trabalho com", "minha impressora", "tinta que uso",
+            "fornecedor atual", "compro de", "uso a tinta",
+        ]):
+            lead_state.parque_tintas_mapeado = True
+
         db.commit()
 
         # ── Detecção de despedida expandida para o Arcca ─────────────────
@@ -1527,26 +1540,48 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         # (07/08): cliente mandou 1 mensagem, Bruno pediu o modelo da
         # maquina, e o card ja nasceu fechado e entregue pro vendedor no
         # mesmo segundo -- sem esperar a resposta nem negociar nada.
-        # FIX: exige quantidade minima de mensagem (piso contra handoff
-        # imediato) E que pelo menos 2 das 4 etapas de substancia real
-        # tenham acontecido de fato -- nao so trocar mensagem, mas ter
-        # coberto conteudo de venda de verdade (Doss, produto, ROI ou dor
-        # do cliente). Nao exige as 4 -- cliente pode desviar de um
-        # assunto e a conversa segue sem travar por causa disso.
+        # FIX (2a rodada, 07/08): o proprio prompt exige uma lista de 10
+        # itens antes de liberar a frase de fechamento -- nome, cidade,
+        # produto, preco/condicoes, duvida tecnica, parque de maquinas,
+        # tintas, email, telefone, CNPJ ("ESCALADA, so encerre quando
+        # TODOS concluidos"). A trava de codigo (2 de 4 sinais) ficava
+        # mais fraca que essa exigencia do proprio prompt -- dava pra
+        # fechar tecnicamente sem bater o que o prompt pede de verdade.
+        # Telefone e sempre conhecido (e o proprio numero da conversa).
+        # "Duvida tecnica respondida" e aproximada por doss_apresentada/
+        # produto_apresentado (sinal de que uma resposta tecnica real
+        # foi dada) -- nao da pra confirmar por palavra-chave se a
+        # duvida ESPECIFICA do cliente foi resolvida, entao usa o sinal
+        # mais proximo disponivel.
+        tem_nome_real = bool(lead.name and lead.name != phone and len(str(lead.name).strip()) > 2)
+        tem_cidade = bool(lead.city)
+        tem_produto = bool(lead_state.produto_apresentado or lead_state.produto_interesse)
+        tem_preco = bool(lead_state.preco_discutido)
+        tem_duvida_tecnica = bool(lead_state.doss_apresentada or lead_state.produto_apresentado)
+        tem_parque_tintas = bool(lead_state.parque_tintas_mapeado)
+        tem_email = bool(lead_state.email)
+        tem_cnpj = bool(lead_state.cnpj)
+
+        itens_checklist = {
+            "nome": tem_nome_real, "cidade": tem_cidade, "produto": tem_produto,
+            "preco": tem_preco, "duvida_tecnica": tem_duvida_tecnica,
+            "parque_tintas": tem_parque_tintas, "email": tem_email, "cnpj": tem_cnpj,
+        }
+        itens_faltando = [k for k, v in itens_checklist.items() if not v]
         engajamento_mensagens = sum(1 for m in messages if m.get("role") == "user")
-        etapas_substancia = sum([
-            bool(lead_state.doss_apresentada),
-            bool(lead_state.produto_apresentado),
-            bool(lead_state.roi_apresentado),
-            bool(lead_state.dor_identificada),
-        ])
+
+        # Valvula de escape: cliente pode legitimamente recusar dar um
+        # item (nao quer passar CNPJ, por exemplo) -- travar pra sempre
+        # nesse caso vira exatamente o interrogatorio repetitivo que foi
+        # pedido pra nunca acontecer. Com engajamento longo (10+
+        # mensagens), libera mesmo com item faltando.
         if despedida_detectada and lead_state.stage not in ("closed",) and (
             engajamento_mensagens < 3
-            or (etapas_substancia < 2 and engajamento_mensagens < 8)
+            or (itens_faltando and engajamento_mensagens < 10)
         ):
             logger.warning(
                 f"[ARCCA] Handoff forte bloqueado para {phone}: "
-                f"{engajamento_mensagens} mensagem(ns), {etapas_substancia}/4 etapas de substancia -- "
+                f"{engajamento_mensagens} mensagem(ns), faltando {itens_faltando} -- "
                 "sem negociacao real suficiente ainda."
             )
             despedida_detectada = False
