@@ -306,13 +306,31 @@ def _normalize_result(
     protected = {"order_authorized", "critical", "support"}
 
     if last_speaker == "customer":
-        normalized["needs_agent_reply"] = True
-        normalized["needs_followup"] = False
-        normalized["should_close"] = False
-        if status not in protected:
-            normalized["analysis_status"] = "awaiting_agent"
-        if (inactive_minutes or 0) >= 60 and normalized.get("priority") in {None, "", "low", "normal"}:
-            normalized["priority"] = "high"
+        # FIX: antes, sempre que a ULTIMA mensagem era do cliente, o
+        # codigo forcava needs_agent_reply=True e should_close=False na
+        # marca, IGNORANDO o que a propria IA ja tinha determinado. Isso
+        # quebrava exatamente o caso "obrigado, ate mais" -- o modelo ja
+        # reconhecia certo que era um fechamento genuino (should_close:
+        # true no JSON dele), mas essa regra mecanica sobrescrevia de
+        # volta pra "precisa responder", e a conversa nunca saia do
+        # status "aguardando agente" -- ficava gerando consulta/acao
+        # pra sempre numa conversa que ja tinha acabado.
+        # Agora respeita o should_close da IA quando o cliente encerrou
+        # de verdade (nao esta em status protegido tipo pedido
+        # autorizado/critico/suporte, que merecem revisao humana mesmo
+        # com uma despedida no final).
+        if normalized.get("should_close") and status not in protected:
+            normalized["needs_agent_reply"] = False
+            normalized["needs_followup"] = False
+            normalized["analysis_status"] = "ready_to_close"
+        else:
+            normalized["needs_agent_reply"] = True
+            normalized["needs_followup"] = False
+            normalized["should_close"] = False
+            if status not in protected:
+                normalized["analysis_status"] = "awaiting_agent"
+            if (inactive_minutes or 0) >= 60 and normalized.get("priority") in {None, "", "low", "normal"}:
+                normalized["priority"] = "high"
     elif last_speaker == "agent":
         normalized["needs_agent_reply"] = False
         if normalized.get("needs_followup"):
@@ -361,18 +379,32 @@ async def _analyze_incremental(
     last_speaker = "customer" if all_messages[-1].get("is_from_contact") else "agent"
     avg_response, max_response = _response_metrics(all_messages)
 
+    # Fallback (IA indisponivel/sem historico) tambem reconhece despedida
+    # simples por palavra-chave -- rede de seguranca leve, o caminho
+    # principal (IA) e quem faz a analise de verdade.
+    _ultimo_texto = (all_messages[-1].get("content") or "").strip().lower()
+    _DESPEDIDAS_SIMPLES = {
+        "obrigado", "obrigada", "obg", "vlw", "valeu", "blz", "beleza",
+        "ok obrigado", "ok obrigada", "até mais", "ate mais", "falou",
+        "tchau", "👍", "🙏",
+    }
+    _e_despedida_simples = last_speaker == "customer" and any(
+        _ultimo_texto == d or _ultimo_texto.startswith(d + " ") or _ultimo_texto.startswith(d + ",")
+        for d in _DESPEDIDAS_SIMPLES
+    )
+
     fallback: Dict[str, Any] = {
-        "analysis_status": "awaiting_agent" if last_speaker == "customer" else "awaiting_customer",
+        "analysis_status": "ready_to_close" if _e_despedida_simples else ("awaiting_agent" if last_speaker == "customer" else "awaiting_customer"),
         "subject": previous.get("subject") or "",
         "customer_intent": previous.get("customer_intent") or "",
         "last_speaker": last_speaker,
-        "pending_question": last_speaker == "customer",
-        "needs_agent_reply": last_speaker == "customer",
+        "pending_question": last_speaker == "customer" and not _e_despedida_simples,
+        "needs_agent_reply": last_speaker == "customer" and not _e_despedida_simples,
         "needs_followup": False,
-        "should_close": False,
-        "priority": "high" if last_speaker == "customer" and (inactive_minutes or 0) >= 60 else "normal",
+        "should_close": _e_despedida_simples,
+        "priority": "high" if last_speaker == "customer" and not _e_despedida_simples and (inactive_minutes or 0) >= 60 else "normal",
         "summary": previous.get("summary") or "Classificacao baseada na ultima mensagem.",
-        "recommended_action": "Responder o cliente" if last_speaker == "customer" else "Aguardar resposta do cliente",
+        "recommended_action": "Nenhuma ação necessária, cliente encerrou a conversa" if _e_despedida_simples else ("Responder o cliente" if last_speaker == "customer" else "Aguardar resposta do cliente"),
         "memory": previous.get("memory") if isinstance(previous.get("memory"), dict) else {},
     }
 
