@@ -10,12 +10,22 @@ logger = logging.getLogger(__name__)
 MARCAS_CONCORRENTES = [
     "mimaki", "roland", "epson", "mutoh", "brother",
     "hp latex", "ricoh", "xuli", "flora", "infiniti", "allwin",
+    # FIX: faltavam concorrentes diretos brasileiros de tinta/impressora
+    # sublimatica e DTF -- o mesmo mercado da Doss. "Fabrijet" e o caso
+    # documentado (cliente mencionou, Bruno nao reconheceu nem pesquisou)
+    # -- concorrente real, sediado em Itajaí/SC, bem perto da Doss.
+    "fabrijet", "sublimpel", "gênesis", "genesis", "sublitop",
 ]
 
 TRIGGERS_TECNICOS = [
     "especificaç", "especific", "velocidade", "cabeç", "largura",
     "quanto imprime", "como funciona", "conta mais", "me fala",
     "detalhe", "caracteristica", "característica", "qual a diferença",
+    # FIX: perguntas comuns de comparação nao batiam em nenhum gatilho
+    # acima (ex: "voces tem tinta igual a Fabrijet?"), entao a busca
+    # nunca disparava mesmo com a marca certa na lista.
+    "melhor que", "pior que", "compara", "comparad", "vale a pena",
+    "tem tinta igual", "tem algo igual", "é bom", "é boa", "recomend",
 ]
 
 
