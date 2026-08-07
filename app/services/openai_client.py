@@ -1713,6 +1713,24 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
                     if kw in primeiras:
                         origem_lead = orig; break
 
+                # FIX: quando existe referral REAL do Meta Click-to-
+                # WhatsApp (Twilio manda isso de verdade quando o
+                # cliente clica num anuncio, nao e adivinhacao por
+                # palavra-chave), usa isso -- e mais confiavel que
+                # tentar achar "instagram" solto no texto da conversa.
+                REFERRAL_SOURCE_MAP = {
+                    "ig": "Trafego Pago- Instagram",
+                    "instagram": "Trafego Pago- Instagram",
+                    "fb": "Trafego Pago- Facebook",
+                    "fb_page": "Trafego Pago- Facebook",
+                    "facebook": "Trafego Pago- Facebook",
+                }
+                if lead_state.referral_source_type:
+                    origem_lead = REFERRAL_SOURCE_MAP.get(
+                        lead_state.referral_source_type.lower(),
+                        f"Trafego Pago- {lead_state.referral_source_type}",
+                    )
+
                 if campanha_ativa and campanha_ativa.get("_codigo"):
                     origem_lead = campanha_ativa.get("origem", origem_lead)
                     campanha_nome = campanha_ativa.get("nome","")

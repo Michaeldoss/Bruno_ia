@@ -180,6 +180,24 @@ async def _mirror_inbound_media(
         )
 
 
+async def _salvar_referral_se_houver(phone: str, source_type: str, headline: str) -> None:
+    db = SessionLocal()
+    try:
+        lead_state = db.query(LeadState).filter(LeadState.phone == phone).first()
+        if not lead_state:
+            lead_state = LeadState(phone=phone)
+            db.add(lead_state)
+        if not lead_state.referral_source_type:  # nao sobrescreve o original
+            lead_state.referral_source_type = source_type
+            lead_state.referral_headline = headline
+            db.commit()
+            logger.info(f"[REFERRAL] {phone}: veio de anuncio real ({source_type}) -- '{headline}'")
+    except Exception as e:
+        logger.error(f"[REFERRAL] Falha ao salvar referral de {phone}: {e}")
+    finally:
+        db.close()
+
+
 def find_all_media_for_text(text: str) -> list:
     if not text:
         return []
@@ -218,6 +236,17 @@ async def twilio_webhook(
         num_media = int(form.get("NumMedia") or (1 if MediaUrl0 else 0))
     except (TypeError, ValueError):
         num_media = 1 if MediaUrl0 else 0
+
+    # Captura o referral do Meta Click-to-WhatsApp, se o Twilio mandou --
+    # so vem preenchido quando o cliente clicou num anuncio de verdade
+    # (nao no link wa.me?text= das campanhas, que e outro mecanismo).
+    # So salva na PRIMEIRA vez (nao sobrescreve se o lead ja tinha),
+    # pra nao perder a origem original numa mensagem posterior sem
+    # referral (ex: segunda mensagem da mesma conversa).
+    referral_source_type = form.get("ReferralSourceType")
+    referral_headline = form.get("ReferralHeadline")
+    if referral_source_type:
+        fire_and_forget(_salvar_referral_se_houver(phone, str(referral_source_type), str(referral_headline or "")))
 
     media_items: list[tuple[str, str]] = []
     for index in range(max(0, num_media)):

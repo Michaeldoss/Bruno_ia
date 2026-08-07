@@ -92,6 +92,14 @@ class LeadState(Base):
     preco_discutido        = Column(Boolean, default=False)
     parque_tintas_mapeado  = Column(Boolean, default=False)
 
+    # ── Origem real do anuncio (Meta Click-to-WhatsApp) ────────────────────
+    # O Twilio manda isso de verdade quando o cliente clica num anuncio
+    # "Click-to-WhatsApp" (Facebook/Instagram) -- dado direto do Meta,
+    # nao e adivinhacao por palavra-chave no texto da mensagem (que e
+    # o que o codigo fazia ate agora pra decidir a origem do lead).
+    referral_source_type = Column(String, nullable=True)   # ex: "ig", "fb_page"
+    referral_headline    = Column(String, nullable=True)   # titulo do anuncio clicado
+
     # ── Dados coletados ────────────────────────────────────────────────────
     cnpj      = Column(String, nullable=True)
     cnpj_data = Column(Text,   nullable=True)
@@ -248,3 +256,5 @@ _add_column_if_missing("lead_states", "roi_apresentado", "BOOLEAN DEFAULT false"
 _add_column_if_missing("lead_states", "dor_identificada", "BOOLEAN DEFAULT false")
 _add_column_if_missing("lead_states", "preco_discutido", "BOOLEAN DEFAULT false")
 _add_column_if_missing("lead_states", "parque_tintas_mapeado", "BOOLEAN DEFAULT false")
+_add_column_if_missing("lead_states", "referral_source_type", "VARCHAR")
+_add_column_if_missing("lead_states", "referral_headline", "VARCHAR")
