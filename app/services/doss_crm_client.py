@@ -39,10 +39,19 @@ async def escalate_to_human(
     serasa_fatores: Optional[str] = None,
     finalizado: bool = True,
     email: Optional[str] = None,
-) -> bool:
+) -> dict:
     """
     Envia o lead pro Doss CRM quando Bruno encerra a conversa.
     Substitui a integracao antiga com o Arcca (arcca_client.py).
+
+    Retorna sempre um dict {"ok": bool, "agent_name": str|None,
+    "agent_phone": str|None} -- NUNCA um bool solto. A assinatura
+    dizia "-> bool" antes, o que e enganoso: um dict nao-vazio e
+    sempre verdadeiro em Python, entao um "if await escalate_to_human(...)"
+    direto (em vez de checar .get("ok")) passaria por cima de uma
+    falha real sem ninguem perceber. Hoje os 3 pontos que chamam essa
+    funcao ja usam .get("ok") corretamente -- isso e so pra garantir
+    que continue assim no futuro.
 
     O endpoint do lado do Doss CRM cuida de: criar/achar contato,
     criar conversa, criar card no pipeline em "Novo Lead" com rodizio
@@ -54,7 +63,12 @@ async def escalate_to_human(
     """
     if not DOSS_CRM_KEY:
         logger.error("Doss CRM: BRUNO_API_KEY nao configurada - abortando escalate_to_human")
-        return False
+        # FIX: retornava False (bool) aqui, mas todo chamador espera
+        # dict e faz resultado.get("ok") -- se BRUNO_API_KEY sumisse do
+        # ambiente por qualquer motivo, essa linha quebrava a chamada
+        # inteira com AttributeError ('bool' object has no attribute
+        # 'get') em vez de simplesmente logar a falha e seguir.
+        return {"ok": False, "agent_name": None, "agent_phone": None}
 
     payload = {
         "phone": phone,
