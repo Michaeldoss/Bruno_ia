@@ -1553,9 +1553,37 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         # foi dada) -- nao da pra confirmar por palavra-chave se a
         # duvida ESPECIFICA do cliente foi resolvida, entao usa o sinal
         # mais proximo disponivel.
+        # FIX: "produto identificado" no gate usava um sinal (produto_
+        # apresentado) DIFERENTE do que realmente vai pro card mais
+        # abaixo (produto_lead, calculado com PRODUTO_MAP contra o texto
+        # real da conversa). Os dois podiam discordar -- gate "passava"
+        # (Bruno so mencionou a palavra "modelo" numa pergunta) mas o
+        # card saia com produto vazio mesmo assim. Agora o gate calcula
+        # o MESMO valor real que vai pro card, com a mesma logica.
+        _PRODUTO_MAP_GATE = [
+            "1908","3204","3202","1904","1802","1801","dtf uv 6","dtf uv 3",
+            "dtf textil 6","dtf textil 3","dtf 60","dtf 30","flatbed","jinka",
+            "laser","sublimacao","eco solvente","dgtex","dgeco","tinta dtf",
+        ]
+        _conv_cliente_preview = " ".join(
+            str(m.get("content","")).lower() for m in messages
+            if m.get("role") == "user" and not str(m.get("content","")).startswith("[")
+        )
+        _conv_full_preview = " ".join(str(m.get("content","")).lower() for m in messages)
+        produto_real = next(
+            (kw for kw in _PRODUTO_MAP_GATE if kw in _conv_cliente_preview),
+            next((kw for kw in _PRODUTO_MAP_GATE if kw in _conv_full_preview), ""),
+        )
+
+        # "origem" sempre resolve pra um valor valido (fallback padrao
+        # "WhatsApp Direto" quando nao vem de campanha nem bate palavra-
+        # chave de canal) -- diferente de produto, nunca fica vazio, entao
+        # nao precisa de item separado no checklist: o card sempre sai
+        # com origem preenchida, so nao trava a conversa esperando isso.
+
         tem_nome_real = bool(lead.name and lead.name != phone and len(str(lead.name).strip()) > 2)
         tem_cidade = bool(lead.city)
-        tem_produto = bool(lead_state.produto_apresentado or lead_state.produto_interesse)
+        tem_produto = bool(produto_real or lead_state.produto_interesse)
         tem_preco = bool(lead_state.preco_discutido)
         tem_duvida_tecnica = bool(lead_state.doss_apresentada or lead_state.produto_apresentado)
         tem_parque_tintas = bool(lead_state.parque_tintas_mapeado)
