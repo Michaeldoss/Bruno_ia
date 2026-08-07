@@ -6,9 +6,24 @@ from typing import Dict, List, Optional, Callable, Any
 logger = logging.getLogger(__name__)
 
 class MessageBuffer:
-    def __init__(self, debounce_seconds: float = 6.0):  # FIX: era 8.0, reduzido para 3.0
+    def __init__(self, debounce_seconds: float = 6.0):
         self.buffer: Dict[str, Dict[str, Any]] = {}
         self.debounce_seconds = debounce_seconds
+        # FIX: asyncio.create_task(...) sem guardar referencia e risco
+        # conhecido -- se o garbage collector rodar antes da task
+        # terminar, ela morre no meio, sem log nenhum. Aqui e
+        # especialmente grave: esse buffer processa TODA mensagem de
+        # texto de TODO cliente. Se a task de _wait_and_trigger morrer
+        # assim, a mensagem fica presa pra sempre (is_waiting nunca
+        # volta a False), e o cliente simplesmente para de receber
+        # resposta -- sem erro, sem retry, silencioso.
+        self._background_tasks: set = set()
+
+    def _fire_and_forget(self, coro):
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     async def add_message(self, phone: str, message: str, callback: Callable[[str, str], Any]):
         """
@@ -27,10 +42,9 @@ class MessageBuffer:
         self.buffer[phone]["last_received"] = time.time()
         logger.info(f"[BUFFER] Mensagem adicionada para {phone}. Total: {len(self.buffer[phone]['messages'])}")
 
-        # FIX: usar asyncio.create_task para não bloquear o caller
         if not self.buffer[phone]["is_waiting"]:
             self.buffer[phone]["is_waiting"] = True
-            asyncio.create_task(self._wait_and_trigger(phone, callback))
+            self._fire_and_forget(self._wait_and_trigger(phone, callback))
 
     async def _wait_and_trigger(self, phone: str, callback: Callable):
         """
@@ -59,5 +73,7 @@ class MessageBuffer:
             if phone in self.buffer:
                 del self.buffer[phone]
 
-# FIX: debounce_seconds=3.0 (era 8.0 — causava sensação de Bruno "parado")
+# Tempo de silencio (segundos) que o Bruno espera depois da ultima
+# mensagem antes de processar o que o cliente mandou -- agrupa
+# mensagens picadas em uma so troca com a IA.
 message_buffer = MessageBuffer(debounce_seconds=6.0)
