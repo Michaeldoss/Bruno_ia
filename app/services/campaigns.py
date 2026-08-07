@@ -365,10 +365,24 @@ def detectar_campanha(primeira_mensagem: str) -> dict:
     for gatilho, codigo in GATILHOS_FRASE.items():
         if gatilho in texto:
             campanha = CAMPANHAS.get(codigo)
-            if campanha and campanha.get("ativa", False):
-                campanha = dict(campanha)  # copia para não mutar o original
-                campanha["_codigo"] = codigo
-                return campanha
+            if not campanha or not campanha.get("ativa", False):
+                continue
+            # FIX: esse caminho (frase-gatilho) nunca checava vigencia --
+            # so o caminho de codigo curto, logo abaixo, checava. Uma
+            # campanha com "ativa": True mas vigencia ja vencida (ex:
+            # dgtex40off, valida so ate 31/07, "ativa" nunca foi
+            # desligada) continuava sendo aplicada de verdade se o
+            # cliente batesse na frase-gatilho -- oferecendo condicao
+            # que ja acabou. Mesma checagem do outro caminho, aplicada
+            # aqui tambem.
+            vigencia = campanha.get("vigencia")
+            if vigencia:
+                inicio, fim = vigencia
+                if not (inicio <= date.today() <= fim):
+                    continue
+            campanha = dict(campanha)  # copia para não mutar o original
+            campanha["_codigo"] = codigo
+            return campanha
 
     # Verifica códigos curtos
     for codigo, campanha in CAMPANHAS.items():
