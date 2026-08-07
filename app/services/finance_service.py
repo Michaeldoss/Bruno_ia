@@ -204,10 +204,15 @@ async def _processar_titulo(client: httpx.AsyncClient, titulo: dict, estagio: st
 
 
 async def _tick():
-    try:
-        hoje = date.today()
-        async with httpx.AsyncClient(timeout=15) as client:
-            for estagio, offset_dias in ESTAGIOS_DIAS.items():
+    hoje = date.today()
+    async with httpx.AsyncClient(timeout=15) as client:
+        for estagio, offset_dias in ESTAGIOS_DIAS.items():
+            # FIX: os 5 estagios rodavam dentro do mesmo try -- se
+            # get_titulos_a_receber falhasse pra UM estagio, os
+            # seguintes nem chegavam a ser tentados nesse ciclo (so na
+            # proxima hora). Agora cada estagio e independente: falha
+            # em um nao impede os outros no mesmo tick.
+            try:
                 data_alvo = hoje + timedelta(days=offset_dias)
                 titulos = await get_titulos_a_receber(data_vencimento=data_alvo)
                 if not titulos:
@@ -215,8 +220,8 @@ async def _tick():
                 logger.info(f"[COBRANCA] {len(titulos)} título(s) no estágio '{estagio}' (vencimento {data_alvo}).")
                 for titulo in titulos:
                     await _processar_titulo(client, titulo, estagio)
-    except Exception as e:
-        logger.error(f"[COBRANCA] erro no tick: {e}")
+            except Exception as e:
+                logger.error(f"[COBRANCA] erro no estágio '{estagio}': {e}")
 
 
 async def _loop_cobranca():
