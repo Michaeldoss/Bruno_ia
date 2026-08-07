@@ -81,6 +81,23 @@ async def _get_or_create_contact(client: httpx.AsyncClient, phone: str, nome: Op
         json={"org_id": ORG_ID, "name": nome or phone, "phone": phone, "origin": "Bruno IA"},
     )
     if r.status_code >= 300:
+        # FIX: existe trava unica no banco em (org_id, phone) desde
+        # 07/08 -- antes disso, um 409 aqui era raro (so batia se outro
+        # fluxo ja tivesse criado o mesmo contato por coincidencia de
+        # timing). Agora, COM a trava, uma corrida real entre dois
+        # webhooks quase simultaneos pro mesmo telefone bate em conflito
+        # de verdade -- e sem esse fallback, a chamada perdedora
+        # retornava None e perdia o contato inteiro daquela mensagem.
+        # Mesmo padrao ja usado em _get_or_create_conversation logo
+        # abaixo: busca de novo em vez de desistir.
+        r2 = await client.get(
+            f"{SUPABASE_URL}/rest/v1/contacts",
+            params={"phone": f"eq.{phone}", "org_id": f"eq.{ORG_ID}", "select": "id", "limit": 1},
+            headers=_headers(),
+        )
+        rows2 = r2.json() if r2.status_code == 200 else []
+        if isinstance(rows2, list) and rows2:
+            return rows2[0]["id"]
         logger.error(f"[CRM Inbox] Falha ao criar contato: {r.status_code} {r.text[:300]}")
         return None
     data = r.json()
@@ -230,6 +247,50 @@ async def human_active_recently(phone: str, window_hours: int = 12) -> bool:
         return False
 
 
+async def _get_next_agent_id(client: httpx.AsyncClient) -> Optional[str]:
+    """Rodizio real entre vendedores do Comercial -- mesma logica (e o
+    MESMO sinal de rastreio, origin='Campanha') que api/leads/create.js
+    usa no caminho principal. Antes esse fallback nao fazia rodizio
+    nenhum: o card nascia com owner_id = agent_id da conversa, que por
+    padrao e o proprio Bruno -- o lead ficava preso no perfil do bot,
+    sem dono de verdade, se o endpoint principal do CRM tivesse falhado
+    bem na hora de um fechamento.
+    """
+    try:
+        agents = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            params={
+                "org_id": f"eq.{ORG_ID}", "is_seller": "eq.true",
+                "is_active": "eq.true", "department": "eq.Comercial",
+                "select": "id", "order": "created_at",
+            },
+            headers=_headers(),
+        )
+        agent_rows = agents.json() if agents.status_code == 200 else []
+        if not isinstance(agent_rows, list) or not agent_rows:
+            return None
+        agent_ids = [a["id"] for a in agent_rows]
+
+        last = await client.get(
+            f"{SUPABASE_URL}/rest/v1/pipeline_leads",
+            params={
+                "org_id": f"eq.{ORG_ID}", "origin": "eq.Campanha",
+                "select": "owner_id", "order": "created_at.desc", "limit": 1,
+            },
+            headers=_headers(),
+        )
+        last_rows = last.json() if last.status_code == 200 else []
+        last_owner = last_rows[0].get("owner_id") if isinstance(last_rows, list) and last_rows else None
+
+        if not last_owner:
+            return agent_ids[0]
+        idx = agent_ids.index(last_owner) if last_owner in agent_ids else -1
+        return agent_ids[(idx + 1) % len(agent_ids)]
+    except Exception as e:
+        logger.error(f"[CRM Inbox] Erro no rodizio de agente (fallback): {e}")
+        return None
+
+
 async def criar_lead_no_pipeline(
     phone: str,
     nome: Optional[str] = None,
@@ -265,7 +326,10 @@ async def criar_lead_no_pipeline(
         return False
 
     PIPELINE_COMERCIAL = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-    STAGE_CONTATO_INICIADO = "05cdab10-c222-4feb-bdcf-a081c7392256"
+    # FIX: era STAGE_CONTATO_INICIADO -- esse fallback criava card direto
+    # em "Contato Iniciado", pulando "Novo Lead" (onde o caminho
+    # principal, api/leads/create.js, sempre cria). Alinhado agora.
+    STAGE_NOVO_LEAD = "4ee64087-ff9f-4efc-8f41-e4ee7fcb07ea"
 
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
@@ -342,7 +406,10 @@ async def criar_lead_no_pipeline(
                 logger.info(f"[CRM] {phone_clean} foi removido do funil manualmente -- Bruno nao recria.")
                 return False
 
-            # dono: o agente que ja atende essa conversa, se houver
+            # dono: se ja tem AGENTE HUMANO atendendo essa conversa, mantem
+            # ele. Se nao (agent_id vazio ou e o proprio Bruno), usa o
+            # rodizio real do Comercial -- NUNCA deixa o card com dono
+            # sendo o perfil do Bruno, ele nao e vendedor de verdade.
             owner_id = None
             conv = await client.get(
                 f"{SUPABASE_URL}/rest/v1/conversations",
@@ -358,7 +425,12 @@ async def criar_lead_no_pipeline(
             conversation_id = None
             if conv.status_code == 200 and isinstance(conv.json(), list) and conv.json():
                 conversation_id = conv.json()[0].get("id")
-                owner_id = conv.json()[0].get("agent_id")
+                agent_id_conversa = conv.json()[0].get("agent_id")
+                if agent_id_conversa and agent_id_conversa != BRUNO_AGENT_ID:
+                    owner_id = agent_id_conversa
+
+            if not owner_id and finalizado:
+                owner_id = await _get_next_agent_id(client)
 
             titulo = (str(nome).strip() if nome and nome != phone_clean else phone_clean)
             if finalizado:
@@ -372,11 +444,11 @@ async def criar_lead_no_pipeline(
                     "contact_id": contact_id,
                     "conversation_id": conversation_id,
                     "pipeline_id": PIPELINE_COMERCIAL,
-                    "stage_id": etapa_alvo_id or STAGE_CONTATO_INICIADO,
+                    "stage_id": etapa_alvo_id or STAGE_NOVO_LEAD,
                     "owner_id": owner_id,
                     "status": "active",
                     "title": titulo,
-                    "origin": "Bruno IA",
+                    "origin": "Campanha" if finalizado else "Bruno IA - Qualificando",
                     "product": produto,
                 },
             )
@@ -593,6 +665,21 @@ async def log_message(
         db.add(fila)
         db.commit()
         db.refresh(fila)
+
+        # FIX: mensagem de texto (a maioria) nunca tem whatsapp_id real
+        # (so midia tem, via MessageSid). Sem isso, se _sincronizar_uma_vez
+        # falhar DEPOIS de ja ter inserido a mensagem com sucesso (ex: o
+        # PATCH de "ultima mensagem" da conversa falha logo em seguida), o
+        # worker de retry roda a funcao inteira de novo -- inclusive o
+        # insert que ja tinha funcionado -- e cria duplicata visivel na
+        # conversa, porque NULL nunca bate com NULL na trava unica do
+        # banco. Gera uma chave sintetica estavel (usa o proprio id da
+        # fila) so quando nao veio whatsapp_id real, pra trava servir de
+        # idempotencia tambem nesse caso.
+        if not whatsapp_id:
+            whatsapp_id = f"bruno-queue-{fila.id}"
+            fila.whatsapp_id = whatsapp_id
+            db.commit()
     except Exception as e:
         # Se nem isso der certo (banco do proprio Bruno fora do ar),
         # ai sim nao ha o que fazer -- mas isso e muitissimo mais raro
