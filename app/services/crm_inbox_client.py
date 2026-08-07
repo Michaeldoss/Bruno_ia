@@ -808,7 +808,13 @@ async def _checar_saude_supabase():
     from app.config import get_settings
     from app.services.twilio_client import twilio_service
     settings = get_settings()
-    ADMIN_PHONE = "+554797342869"  # Michael
+    # FIX: era o numero de teste (+554797342869, resetado hoje pra
+    # simular cliente) -- unificado com o mesmo numero real usado pro
+    # outro alerta critico do sistema (saldo Anthropic, em
+    # openai_client.py: _ADMIN_ALERT_PHONE), pra nao correr risco de
+    # alerta critico ir pra um numero que pode ser resetado/limpo de
+    # novo no futuro.
+    ADMIN_PHONE = "+554792307367"  # Michael (numero comercial real)
 
     try:
         async with httpx.AsyncClient(timeout=8) as client:
