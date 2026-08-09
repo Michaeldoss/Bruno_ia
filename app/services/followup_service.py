@@ -294,12 +294,25 @@ async def _transferir_para_agente(phone: str, resumo: str = None) -> bool:
             )
             if conv.status_code == 200 and isinstance(conv.json(), list) and conv.json():
                 conversation_id = conv.json()[0]["id"]
-                await client.patch(
+                patch_resp = await client.patch(
                     f"{SUPABASE_URL}/rest/v1/conversations",
                     params={"id": f"eq.{conversation_id}"},
                     headers=_headers(),
                     json={"agent_id": agente_id},
                 )
+                if patch_resp.status_code >= 300:
+                    # FIX: essa chamada nunca checava o resultado -- se
+                    # falhasse (confirmado em producao, 09/08: 7 leads
+                    # com handoff "bem sucedido" mas agent_id nunca
+                    # mudou de Bruno IA), ninguem saberia. Agora loga.
+                    # A atribuicao de dono do CARD nao depende mais so
+                    # disso (criar_lead_no_pipeline resolve por conta
+                    # propria agora), mas o campo da CONVERSA precisa
+                    # disso pra aparecer certo no Inbox do agente.
+                    logger.error(
+                        f"[FOLLOWUP] Falha ao atualizar agent_id da conversa {phone_clean}: "
+                        f"{patch_resp.status_code} {patch_resp.text[:200]}"
+                    )
             else:
                 logger.error("[FOLLOWUP] Handoff de %s: conversa não encontrada no CRM", phone_clean)
                 return False

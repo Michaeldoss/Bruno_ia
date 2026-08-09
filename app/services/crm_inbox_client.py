@@ -369,7 +369,7 @@ async def criar_lead_no_pipeline(
             # ja existe card para esse contato? enriquece em vez de so confirmar
             r = await client.get(
                 f"{SUPABASE_URL}/rest/v1/pipeline_leads",
-                params={"contact_id": f"eq.{contact_id}", "status": "eq.active", "select": "id,stage_id,product", "limit": 1},
+                params={"contact_id": f"eq.{contact_id}", "status": "eq.active", "select": "id,stage_id,product,owner_id", "limit": 1},
                 headers=_headers(),
             )
             if r.status_code == 200 and isinstance(r.json(), list) and r.json():
@@ -386,6 +386,35 @@ async def criar_lead_no_pipeline(
                     pos_atual = st_atual.json()[0]["position"] if st_atual.status_code == 200 and st_atual.json() else 0
                     if etapa_alvo_pos > pos_atual:
                         patch_card["stage_id"] = etapa_alvo_id
+                # FIX: card ja existente (o caso mais comum agora, ja que
+                # todo primeiro contato cria um card sem dono) nunca tinha
+                # o dono reatribuido aqui, MESMO recebendo finalizado=True.
+                # Confirmado em producao (09/08): 7 leads tiveram handoff
+                # por silencio "bem sucedido" do lado do Bruno (stage
+                # virou closed), mas o card ficou sem dono pra sempre --
+                # nenhum vendedor sabia que esses clientes existiam.
+                # Mesma logica de resolucao de dono do card NOVO, aplicada
+                # aqui tambem quando o card ja existe mas ainda esta sem
+                # dono.
+                if finalizado and not card.get("owner_id"):
+                    conv_own = await client.get(
+                        f"{SUPABASE_URL}/rest/v1/conversations",
+                        params={
+                            "whatsapp_phone": f"eq.{phone_clean}", "org_id": f"eq.{ORG_ID}",
+                            "select": "agent_id", "order": "created_at.desc", "limit": 1,
+                        },
+                        headers=_headers(),
+                    )
+                    owner_existente = None
+                    if conv_own.status_code == 200 and isinstance(conv_own.json(), list) and conv_own.json():
+                        agent_id_conversa = conv_own.json()[0].get("agent_id")
+                        if agent_id_conversa and agent_id_conversa != BRUNO_AGENT_ID:
+                            owner_existente = agent_id_conversa
+                    if not owner_existente:
+                        owner_existente = await _get_next_agent_id(client)
+                    if owner_existente:
+                        patch_card["owner_id"] = owner_existente
+                        patch_card["origin"] = "Campanha"
                 if patch_card:
                     await client.patch(
                         f"{SUPABASE_URL}/rest/v1/pipeline_leads",
