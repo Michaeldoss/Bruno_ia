@@ -30,15 +30,24 @@ BRUNO_AGENT_ID = "31b8f1f2-b509-4319-abfb-989954b3ba25"
 SUPABASE_URL = getattr(settings, "SUPABASE_URL", "").rstrip("/")
 SUPABASE_KEY = getattr(settings, "SUPABASE_SERVICE_ROLE_KEY", "")
 
-JANELAS_COMERCIAIS = [
-    (time(8, 0), time(12, 0)),
-    (time(13, 30), time(18, 0)),
-]
+# MUDANÇA (09/08): antes o follow-up só rodava dia útil, horário
+# comercial -- mas isso arriscava perder a janela de 24h do WhatsApp
+# pra responder de graça em texto livre (depois disso, só template
+# pago). Se o cliente escreve sábado, domingo ou feriado, o Bruno
+# precisa poder insistir tirando dúvida dentro dessas 24h, senão o
+# lead esfria ou vira custo de template sem necessidade.
+# Regra nova: manda follow-up qualquer dia da semana, a QUALQUER hora,
+# só NÃO manda entre 22h e 08h (não ser invasivo de madrugada).
+HORARIO_SILENCIOSO_INICIO = time(22, 0)
+HORARIO_SILENCIOSO_FIM = time(8, 0)
 
 FOLLOWUP_MINUTOS = [30, 120, 360, 720, 1200]
 INTERVALO_MINIMO_ENTRE_STEPS = 25
 # 22h -- transfere para agente humano antes da janela de 24h do WhatsApp
 # fechar (depois disso, mensagem de texto livre falha com erro 63016).
+# Esse SIM roda em qualquer dia/hora -- e o limite duro que evita ser
+# invasivo pra sempre: depois de 22h sem resposta, para de insistir e
+# passa pra um humano de verdade.
 MINUTOS_HANDOFF = 1320
 
 # Pool de agentes que recebem o lead quando o Bruno esgota o follow-up
@@ -64,24 +73,26 @@ def utcnow() -> datetime:
 
 
 def esta_em_horario_comercial(agora: Optional[datetime] = None) -> bool:
-    # FIX: so checava a HORA (8h-12h, 13h30-18h) -- nunca checava o DIA
-    # DA SEMANA. Regra de negocio documentada e segunda a sexta; sem
-    # essa checagem, follow-up podia disparar normalmente no sabado e
-    # domingo, direto na janela de horario comercial de um dia util.
+    # FIX (09/08): nome da função ficou de legado, mas agora significa
+    # "não está na janela de silêncio noturno" -- não é mais dia útil/
+    # horário comercial. Roda igual sábado, domingo e feriado, só não
+    # manda follow-up entre 22h e 08h (janela cruza a meia-noite).
     momento = agora or agora_brasilia()
-    if momento.weekday() >= 5:  # 5=sabado, 6=domingo
-        return False
     atual = momento.time()
-    return any(inicio <= atual <= fim for inicio, fim in JANELAS_COMERCIAIS)
+    return HORARIO_SILENCIOSO_FIM <= atual < HORARIO_SILENCIOSO_INICIO
 
 
 def proxima_janela_comercial(agora: Optional[datetime] = None) -> datetime:
+    # Codigo morto hoje (nao chamado em lugar nenhum), mas mantido
+    # coerente com a regra nova (so silencio 22h-08h) pra nao quebrar
+    # se alguem voltar a usar.
     agora = agora or agora_brasilia()
     atual = agora.time()
-    for inicio, _ in JANELAS_COMERCIAIS:
-        if atual < inicio:
-            return agora.replace(hour=inicio.hour, minute=inicio.minute, second=0, microsecond=0)
-    return (agora + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+    if atual < HORARIO_SILENCIOSO_FIM:
+        return agora.replace(hour=8, minute=0, second=0, microsecond=0)
+    if atual >= HORARIO_SILENCIOSO_INICIO:
+        return (agora + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+    return agora
 
 
 def _headers() -> dict:
