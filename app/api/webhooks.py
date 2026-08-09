@@ -229,6 +229,18 @@ async def twilio_webhook(
         return Response(content=str(MessagingResponse()), media_type="application/xml")
 
     phone = From.replace("whatsapp:", "")
+    # FIX: 42 dos 45 leads reais do Bruno ja tem telefone salvo com "+"
+    # na frente (formato que o Twilio manda por padrao) -- so 3 tem sem,
+    # de outro caminho interno que normaliza diferente. Se eu trocasse
+    # a entrada pra tirar o "+", os 42 clientes reais existentes
+    # deixariam de bater com o proprio historico na proxima mensagem
+    # (Lead.phone/LeadState.phone comparam string exata) -- criaria
+    # registro novo do zero pra cada um, perdendo estagio/historico
+    # real. Mais seguro: manter consistente com o formato que ja e
+    # maioria (garante "+" sempre), em vez de inverter pra maioria
+    # quebrar.
+    if phone and not phone.startswith("+"):
+        phone = "+" + re.sub(r"[^\d]", "", phone)
     logger.info("[WEBHOOK] Recebido de %s | SID: %s", From, MessageSid)
 
     form = await request.form()
