@@ -50,8 +50,10 @@ INTERVALO_MINIMO_ENTRE_STEPS = 25
 # passa pra um humano de verdade.
 MINUTOS_HANDOFF = 1320
 
-# Pool de agentes que recebem o lead quando o Bruno esgota o follow-up
-# sem resposta. Escolhido por quem tem menos cards ativos no momento.
+# Fallback de emergência SÓ se a consulta dinâmica ao pool de vendedores
+# falhar (erro de rede/API) -- o rodízio de verdade agora consulta
+# profiles (is_seller + department=Comercial) em tempo real, ver
+# _escolher_agente_handoff() abaixo.
 AGENTES_HANDOFF = {
     "Michael": "aa5e61b1-a4dd-4905-9e77-6ab447b61a9f",
     "David": "a570720f-74cf-4de0-bb52-d8fafde8031a",
@@ -246,30 +248,47 @@ async def _gerar_mensagem_followup(step: int, nome: str, produto: str, historico
 
 
 async def _escolher_agente_handoff(client: httpx.AsyncClient) -> str:
-    """Alterna estritamente entre os agentes do pool, um de cada vez.
+    """Rodízio real entre os vendedores do Comercial.
 
-    Olha quem recebeu o último lead transferido pelo Bruno e devolve o
-    outro agente da sequência. Não é balanceamento por carga -- é ordem
-    fixa, sempre revezando.
+    FIX (09/08): antes era uma lista fixa no código (só Michael e David,
+    hardcoded), desconectada do rodízio dinâmico que o resto do sistema
+    já usa (api/leads/create.js e crm_inbox_client.py) -- se um terceiro
+    vendedor comercial fosse contratado, esse caminho específico (handoff
+    por silêncio) nunca puxava ele, continuava alternando só entre os
+    dois antigos. Além disso, rastreava "quem foi o último" por um sinal
+    próprio (origin='Bruno IA'), separado do sinal que os outros dois
+    caminhos usam (origin='Campanha') -- dois rodízios cegos um pro
+    outro. Agora consulta o pool de verdade (profiles ativos, vendedor,
+    Comercial) e usa o MESMO sinal de rastreio dos outros caminhos.
     """
     try:
-        pool_ids = list(AGENTES_HANDOFF.values())
+        agentes = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            params={
+                "org_id": f"eq.{ORG_ID}", "is_seller": "eq.true",
+                "is_active": "eq.true", "department": "eq.Comercial",
+                "select": "id", "order": "created_at",
+            },
+            headers=_headers(),
+        )
+        pool_rows = agentes.json() if agentes.status_code == 200 else []
+        pool_ids = [a["id"] for a in pool_rows] if isinstance(pool_rows, list) else []
+        if not pool_ids:
+            return AGENTES_HANDOFF["David"]  # fallback se o pool vier vazio
+
         r = await client.get(
             f"{SUPABASE_URL}/rest/v1/pipeline_leads",
             params={
-                "origin": "eq.Bruno IA",
-                "owner_id": f"in.({','.join(pool_ids)})",
-                "select": "owner_id,created_at",
-                "order": "created_at.desc",
-                "limit": 1,
+                "org_id": f"eq.{ORG_ID}", "origin": "eq.Campanha",
+                "select": "owner_id,created_at", "order": "created_at.desc", "limit": 1,
             },
             headers=_headers(),
         )
         if r.status_code == 200 and isinstance(r.json(), list) and r.json():
             ultimo = r.json()[0].get("owner_id")
-            for agent_id in pool_ids:
-                if agent_id != ultimo:
-                    return agent_id
+            idx = pool_ids.index(ultimo) if ultimo in pool_ids else -1
+            return pool_ids[(idx + 1) % len(pool_ids)]
+        return pool_ids[0]
     except Exception as exc:
         logger.error("[FOLLOWUP] Erro ao escolher agente para handoff: %s", exc)
     return AGENTES_HANDOFF["David"]
