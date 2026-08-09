@@ -349,8 +349,24 @@ async def handle_async_response(
             thread_id = await create_thread()
             lead = Lead(phone=phone, thread_id=thread_id)
             db.add(lead)
-            db.commit()
-            db.refresh(lead)
+            try:
+                db.commit()
+            except Exception as e:
+                # FIX: Lead.phone ja e unique=True no banco (protege
+                # contra duplicata de verdade), mas faltava tratamento
+                # gracioso -- se duas mensagens de um numero TOTALMENTE
+                # novo chegassem quase juntas (ex: WhatsApp reenviando
+                # por retry de rede), a segunda batia nesse unique e
+                # quebrava sem capturar, em vez de so reaproveitar o
+                # Lead que a primeira acabou de criar.
+                db.rollback()
+                lead = db.query(Lead).filter(Lead.phone == phone).first()
+                if not lead:
+                    logger.error(f"[WEBHOOK] Falha ao criar/recuperar Lead para {phone}: {e}")
+                    return
+                eh_lead_novo = False
+            else:
+                db.refresh(lead)
 
         if eh_lead_novo:
             # FIX: antes o card no pipeline so nascia quando o Bruno
