@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Form, Request, BackgroundTasks, Response, HTTPException
+from fastapi.responses import JSONResponse
 from twilio.twiml.messaging_response import MessagingResponse
 from app.services.twilio_client import twilio_service
 from app.services.openai_client import process_message_with_assistant, create_thread, transcribe_audio, get_typing_delay
@@ -469,6 +470,43 @@ async def handle_async_response(
         logger.error("Erro no processamento para %s: %s", phone, exc, exc_info=True)
     finally:
         db.close()
+
+
+@router.post("/manual-send")
+async def manual_send(request: Request):
+    """
+    Ponte pro CRM mandar mensagem manual pelo canal do Bruno (Twilio).
+
+    Achado em producao (10/08): quando um lead do Bruno e' entregue pra
+    um agente humano, a conversa continua marcada como instancia
+    'bruno-ia' -- mas isso e' Twilio, nao existe canal com esse nome
+    na Evolution API. Se o agente tentasse responder direto pelo CRM
+    (Inbox ou Pipeline), batia 404 "instance does not exist" -- salvava
+    no banco mas nunca chegava no WhatsApp de verdade.
+
+    Esse endpoint deixa o CRM mandar por aqui quando for esse caso
+    especifico, sem precisar credencial da Twilio no lado do CRM --
+    so autentica com a mesma chave compartilhada ja usada nos outros
+    dois sentidos (x-bruno-key).
+    """
+    from app.config import get_settings
+    settings = get_settings()
+    chave = request.headers.get("x-bruno-key", "")
+    if not settings.BRUNO_API_KEY or chave != settings.BRUNO_API_KEY:
+        return JSONResponse(status_code=401, content={"error": "Chave invalida."})
+
+    payload = await request.json()
+    phone = (payload.get("phone") or "").strip()
+    text = (payload.get("text") or "").strip()
+    if not phone or not text:
+        return JSONResponse(status_code=400, content={"error": "phone e text sao obrigatorios."})
+
+    try:
+        sid = await twilio_service.send_whatsapp_message(phone, text)
+        return {"ok": True, "sid": sid}
+    except Exception as exc:
+        logger.error(f"[MANUAL-SEND] Falha ao enviar pra {phone}: {exc}")
+        return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
 
 
 @router.post("/finance/trigger")
