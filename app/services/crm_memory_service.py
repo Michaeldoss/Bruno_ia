@@ -21,6 +21,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -43,6 +44,44 @@ OPENAI_KEY = getattr(settings, "OPENAI_API_KEY", "")
 MODEL = "claude-haiku-4-5-20251001"
 MONTHLY_BUDGET_BRL = float(os.getenv("CRM_AI_MONTHLY_BUDGET_BRL", "250"))
 USD_BRL_SAFETY_RATE = float(os.getenv("CRM_AI_USD_BRL", "6.00"))
+
+# ---------------------------------------------------------------------------
+# Janela de execucao (pedido 10/08): reduzir custo do ciclo de memoria
+# rodando so em horario comercial, dias uteis, a cada 2h em vez de 1h/24-7.
+# Reduz de 168 execucoes/semana para ~25/semana (~85% menos chamadas).
+# ---------------------------------------------------------------------------
+BRASILIA_TZ = ZoneInfo("America/Sao_Paulo")
+CYCLE_INTERVAL_SECONDS = 2 * 3600  # 2 em 2 horas
+BUSINESS_WINDOWS = [(8, 12), (13, 18)]  # (inicio_incl, fim_excl), hora local
+
+
+def _is_business_hours(now: Optional[datetime] = None) -> bool:
+    now = now or datetime.now(BRASILIA_TZ)
+    if now.weekday() >= 5:  # 5=sabado, 6=domingo
+        return False
+    hour = now.hour
+    return any(start <= hour < end for start, end in BUSINESS_WINDOWS)
+
+
+def _seconds_until_next_window(now: Optional[datetime] = None) -> float:
+    """Quantos segundos faltam ate o proximo horario comercial valido,
+    usado quando o ciclo acorda fora da janela -- evita ficar checando
+    de 2 em 2h sem necessidade."""
+    now = now or datetime.now(BRASILIA_TZ)
+    for delta_days in range(0, 8):
+        day = now if delta_days == 0 else now.replace(hour=0, minute=0, second=0, microsecond=0)
+        if delta_days > 0:
+            from datetime import timedelta
+            day = day + timedelta(days=delta_days)
+        if day.weekday() >= 5:
+            continue
+        for start, _end in BUSINESS_WINDOWS:
+            window_start = day.replace(hour=start, minute=0, second=0, microsecond=0)
+            if window_start > now:
+                return (window_start - now).total_seconds()
+        if delta_days == 0:
+            continue
+    return CYCLE_INTERVAL_SECONDS
 MAX_ANALYSES_PER_CYCLE = int(os.getenv("CRM_AI_MAX_ANALYSES_PER_CYCLE", "60"))
 MAX_INITIAL_MESSAGES = int(os.getenv("CRM_AI_MAX_INITIAL_MESSAGES", "40"))
 MAX_DELTA_MESSAGES = int(os.getenv("CRM_AI_MAX_DELTA_MESSAGES", "40"))
@@ -680,11 +719,20 @@ async def run_crm_memory_cycle() -> None:
 async def _loop() -> None:
     await asyncio.sleep(20)
     while True:
+        if not _is_business_hours():
+            wait_s = _seconds_until_next_window()
+            logger.info(
+                "[CRM MEMORY] Fora do horario comercial (seg-sex 08-12/13-18). "
+                "Proxima janela em %.1fh.",
+                wait_s / 3600,
+            )
+            await asyncio.sleep(max(wait_s, 60))
+            continue
         try:
             await run_crm_memory_cycle()
         except Exception as exc:
             logger.exception("[CRM MEMORY] Erro geral do ciclo: %s", exc)
-        await asyncio.sleep(3600)
+        await asyncio.sleep(CYCLE_INTERVAL_SECONDS)
 
 
 crm_memory_task: Optional[asyncio.Task] = None
