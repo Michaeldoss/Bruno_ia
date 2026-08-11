@@ -8,7 +8,7 @@ from app.services.buffer_service import message_buffer
 from app.core.media_catalog import MEDIA_CATALOG
 from app.services.followup_service import resetar_followup
 from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
-from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently, criar_lead_no_pipeline_com_retry as criar_lead_no_pipeline
+from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently, vendedor_humano_do_contato, criar_lead_no_pipeline_com_retry as criar_lead_no_pipeline
 from app.models.database import SessionLocal, Lead, MediaSent, Conversation, LeadState
 from app.config import get_settings
 import logging
@@ -335,6 +335,21 @@ async def handle_async_response(
             return
 
         if await human_active_recently(phone):
+            if not already_mirrored:
+                if user_message:
+                    fire_and_forget(log_message_to_crm(phone, user_message, is_from_contact=True))
+                elif audio_url and content_type and "audio" in content_type:
+                    transcription = await transcribe_audio(audio_url)
+                    if transcription:
+                        fire_and_forget(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
+            return
+
+        # FIX 11/08: cliente antigo do David escreveu de novo depois de
+        # meses sem contato -- human_active_recently (janela de 12h) nao
+        # cobre isso, entao o Bruno assumia a conversa sozinho mesmo o
+        # contato ja tendo vendedor humano definido no cadastro
+        # (contacts.primary_agent_id). So mirror pro CRM, sem responder.
+        if await vendedor_humano_do_contato(phone):
             if not already_mirrored:
                 if user_message:
                     fire_and_forget(log_message_to_crm(phone, user_message, is_from_contact=True))

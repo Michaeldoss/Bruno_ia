@@ -104,6 +104,73 @@ async def _get_or_create_contact(client: httpx.AsyncClient, phone: str, nome: Op
     return (data[0]["id"] if isinstance(data, list) else data.get("id")) if data else None
 
 
+async def vendedor_humano_do_contato(phone: str) -> Optional[str]:
+    """Versao por telefone de contato_tem_vendedor_humano, pra usar em
+    webhooks.py antes do Bruno decidir se engaja na conversa (nao so
+    depois, na hora de criar o registro).
+
+    Falha aberta (retorna None = 'pode responder') em qualquer erro,
+    mesmo padrao do human_active_recently -- nao trava atendimento por
+    instabilidade do CRM.
+    """
+    if not SUPABASE_KEY or SUPABASE_KEY == "stub":
+        return None
+    phone_clean = _normalize_phone(phone)
+    if not phone_clean:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            r = await client.get(
+                f"{SUPABASE_URL}/rest/v1/contacts",
+                params={
+                    "phone": f"eq.{phone_clean}",
+                    "org_id": f"eq.{ORG_ID}",
+                    "select": "primary_agent_id",
+                    "limit": 1,
+                },
+                headers=_headers(),
+            )
+            rows = r.json() if r.status_code == 200 else []
+            if isinstance(rows, list) and rows:
+                dono = rows[0].get("primary_agent_id")
+                if dono and dono != BRUNO_AGENT_ID:
+                    return dono
+    except Exception as exc:
+        logger.warning(f"[CRM Inbox] Falha ao checar vendedor_humano_do_contato: {exc}")
+    return None
+
+
+async def contato_tem_vendedor_humano(client: httpx.AsyncClient, contact_id: str) -> Optional[str]:
+    """Retorna o agent_id do vendedor humano dono desse contato
+    (contacts.primary_agent_id), ou None se nao tem dono definido ou
+    o dono e o proprio Bruno.
+
+    Existe pra corrigir um bug real (11/08): cliente antigo do David
+    (primary_agent_id ja setado no cadastro) escreveu de novo depois
+    de meses, e como _get_or_create_conversation so procurava conversa
+    aberta com whatsapp_instance='bruno-ia' (nunca a instancia do
+    David), nao achou nada, criou conversa NOVA com agent_id=Bruno, e
+    o Bruno assumiu o atendimento sozinho -- inclusive respondendo e
+    negociando produto -- roubando lead que ja era do David.
+    """
+    if not contact_id:
+        return None
+    try:
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/contacts",
+            params={"id": f"eq.{contact_id}", "select": "primary_agent_id"},
+            headers=_headers(),
+        )
+        rows = r.json() if r.status_code == 200 else []
+        if isinstance(rows, list) and rows:
+            dono = rows[0].get("primary_agent_id")
+            if dono and dono != BRUNO_AGENT_ID:
+                return dono
+    except Exception as exc:
+        logger.warning(f"[CRM Inbox] Falha ao checar primary_agent_id: {exc}")
+    return None
+
+
 async def _get_or_create_conversation(client: httpx.AsyncClient, phone: str, contact_id: str) -> tuple:
     """Retorna (conversation_id, unread_count_atual)."""
     r = await client.get(
@@ -123,6 +190,14 @@ async def _get_or_create_conversation(client: httpx.AsyncClient, phone: str, con
     if isinstance(rows, list) and rows:
         return rows[0]["id"], rows[0].get("unread_count") or 0
 
+    # Antes de criar conversa nova com dono=Bruno, confere se esse
+    # contato ja tem vendedor humano definido no cadastro (cliente
+    # antigo retornando). Se tiver, a conversa nasce com o dono certo
+    # desde o inicio -- sem isso, o Bruno virava dono padrao de
+    # qualquer lead que reaparecesse, mesmo tendo vendedor de verdade.
+    dono_humano = await contato_tem_vendedor_humano(client, contact_id)
+    agent_id_novo = dono_humano or BRUNO_AGENT_ID
+
     r = await client.post(
         f"{SUPABASE_URL}/rest/v1/conversations",
         headers=_headers(),
@@ -131,7 +206,7 @@ async def _get_or_create_conversation(client: httpx.AsyncClient, phone: str, con
             "contact_id": contact_id,
             "whatsapp_phone": phone,
             "whatsapp_instance": WHATSAPP_INSTANCE,
-            "agent_id": BRUNO_AGENT_ID,
+            "agent_id": agent_id_novo,
             "status": "open",
             "unread_count": 0,
         },
