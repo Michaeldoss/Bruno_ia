@@ -220,6 +220,7 @@ async def twilio_webhook(
     background_tasks: BackgroundTasks,
     request: Request,
     From: str = Form(...),
+    To: Optional[str] = Form(None),
     Body: Optional[str] = Form(None),
     MediaUrl0: Optional[str] = Form(None),
     MediaContentType0: Optional[str] = Form(None),
@@ -227,6 +228,28 @@ async def twilio_webhook(
 ):
     if MessageSid and _is_duplicate(MessageSid):
         logger.warning(f"[WEBHOOK] Mensagem duplicada ignorada: {MessageSid}")
+        return Response(content=str(MessagingResponse()), media_type="application/xml")
+
+    # FIX 11/08: o Bruno so deve atender mensagem endereçada ao NUMERO
+    # dele mesmo -- nunca existia checagem do campo "To" do Twilio, so
+    # do "From" (quem mandou). Isso deixava aberto o Bruno processar
+    # (e ate responder) mensagem que chegasse nesse mesmo endpoint
+    # mas endereçada a outro numero/canal da empresa, o que nao devia
+    # nunca acontecer -- o numero do Bruno e atipico, so pra campanha,
+    # nao pra atendimento geral. settings.TWILIO_PHONE_NUMBER e o mesmo
+    # numero ja usado pra ENVIAR (twilio_client.py); aqui confere que
+    # bate tambem no RECEBER.
+    numero_bruno = re.sub(r"[^\d+]", "", f"+{settings.TWILIO_PHONE_NUMBER}".replace("++", "+"))
+    numero_destino = re.sub(r"[^\d+]", "", (To or "").replace("whatsapp:", ""))
+    # Falha aberta: se numero_bruno nao tiver pelo menos alguns digitos
+    # de verdade (env var vazia/mal configurada), nao bloqueia nada --
+    # mesmo principio do human_active_recently, pra uma configuracao
+    # errada nao travar o Bruno inteiro por engano.
+    if numero_destino and len(numero_bruno) >= 8 and numero_destino != numero_bruno:
+        logger.warning(
+            "[WEBHOOK] Mensagem endereçada a %s (nao e o numero do Bruno, %s) -- ignorada.",
+            numero_destino, numero_bruno,
+        )
         return Response(content=str(MessagingResponse()), media_type="application/xml")
 
     phone = From.replace("whatsapp:", "")
