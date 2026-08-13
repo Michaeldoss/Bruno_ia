@@ -553,14 +553,22 @@ async def debug_reset_followup(phone: str):
     junto com o fix do bug 'card sem dono matava follow-up na largada'.
     So reseta se o stage estiver 'closed'/'followup_closed'; nao mexe
     em lead que foi fechado por motivo legitimo (recusa, handoff real)."""
-    resetar_followup(phone)
+    phone_limpo = phone.replace("+", "").replace(" ", "")
     db = SessionLocal()
     try:
-        phone_limpo = phone.replace("+", "").replace(" ", "")
         lead_state = db.query(LeadState).filter(LeadState.phone.like(f"%{phone_limpo}%")).first()
+        if not lead_state:
+            return {"encontrado": False}
+        stage_antes = lead_state.stage
+        if lead_state.stage in ("closed", "followup_closed"):
+            lead_state.followup_step = 0
+            lead_state.followup_sent_at = None
+            lead_state.stage = "active"
+            db.commit()
         return {
-            "phone": lead_state.phone if lead_state else None,
-            "stage_apos_reset": lead_state.stage if lead_state else None,
+            "phone": lead_state.phone,
+            "stage_antes": stage_antes,
+            "stage_apos_reset": lead_state.stage,
         }
     finally:
         db.close()
