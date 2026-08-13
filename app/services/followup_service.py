@@ -184,8 +184,18 @@ async def _lead_ja_entregue_ao_crm(phone: str) -> bool:
                     return True
 
                 cards = pipeline.json() if isinstance(pipeline.json(), list) else []
-                if cards:
-                    logger.info("[FOLLOWUP] %s já possui card no pipeline; ciclo encerrado", phone_clean)
+                # FIX 13/08: antes bastava EXISTIR um card (qualquer um,
+                # mesmo sem dono) pra achar que "ja foi entregue a um
+                # humano" e desistir do follow-up na hora. Como o Bruno
+                # cria um card basico assim que a conversa comeca (so pra
+                # aparecer no funil, sem round-robin ter rodado ainda),
+                # praticamente todo lead novo tinha o follow-up morto
+                # nos primeiros segundos -- mesmo sem ninguem responsavel
+                # de verdade. Agora so bloqueia se pelo menos um card
+                # tiver owner_id preenchido (alguem realmente assumiu).
+                cards_com_dono = [c for c in cards if c.get("owner_id")]
+                if cards_com_dono:
+                    logger.info("[FOLLOWUP] %s já possui card com dono no pipeline; ciclo encerrado", phone_clean)
                     return True
 
             return False
