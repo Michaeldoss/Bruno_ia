@@ -547,6 +547,31 @@ async def manual_send(request: Request):
         return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
 
 
+@router.get("/debug/lead-state/{phone}")
+async def debug_lead_state(phone: str):
+    """Consulta rapida do LeadState de um telefone -- criado 13/08 pra
+    diagnosticar reclamacoes de 'Bruno nao fez follow-up' sem precisar
+    de acesso a shell do Render. So devolve campos de fluxo/estado,
+    nada de conteudo de mensagem."""
+    db = SessionLocal()
+    try:
+        phone_limpo = phone.replace("+", "").replace(" ", "")
+        lead_state = db.query(LeadState).filter(LeadState.phone.like(f"%{phone_limpo}%")).first()
+        if not lead_state:
+            return {"encontrado": False, "phone_buscado": phone_limpo}
+        return {
+            "encontrado": True,
+            "phone": lead_state.phone,
+            "stage": lead_state.stage,
+            "followup_step": getattr(lead_state, "followup_step", None),
+            "followup_sent_at": str(getattr(lead_state, "followup_sent_at", None)),
+            "doss_apresentada": getattr(lead_state, "doss_apresentada", None),
+            "produto_apresentado": getattr(lead_state, "produto_apresentado", None),
+        }
+    finally:
+        db.close()
+
+
 @router.post("/finance/trigger")
 async def trigger_finance_collection(background_tasks: BackgroundTasks):
     logger.info("Disparo manual da régua de cobrança solicitado.")
