@@ -549,7 +549,7 @@ async def manual_send(request: Request):
 
 @router.get("/debug/lead-state/{phone}")
 async def debug_lead_state(phone: str):
-    """Consulta rapida do LeadState de um telefone -- criado 13/08 pra
+    """Consulta rapida do LeadState/Lead de um telefone -- criado 13/08 pra
     diagnosticar reclamacoes de 'Bruno nao fez follow-up' sem precisar
     de acesso a shell do Render. So devolve campos de fluxo/estado,
     nada de conteudo de mensagem."""
@@ -557,16 +557,30 @@ async def debug_lead_state(phone: str):
     try:
         phone_limpo = phone.replace("+", "").replace(" ", "")
         lead_state = db.query(LeadState).filter(LeadState.phone.like(f"%{phone_limpo}%")).first()
-        if not lead_state:
+        lead = db.query(Lead).filter(Lead.phone.like(f"%{phone_limpo}%")).first()
+        msg_count = None
+        primeira_msg_em = None
+        ultima_msg_em = None
+        if lead:
+            msgs = db.query(Conversation).filter(Conversation.phone == lead.phone).order_by(Conversation.id.asc()).all()
+            msg_count = len(msgs)
+            if msgs:
+                primeira_msg_em = str(getattr(msgs[0], "created_at", None))
+                ultima_msg_em = str(getattr(msgs[-1], "created_at", None))
+        if not lead_state and not lead:
             return {"encontrado": False, "phone_buscado": phone_limpo}
         return {
             "encontrado": True,
-            "phone": lead_state.phone,
-            "stage": lead_state.stage,
-            "followup_step": getattr(lead_state, "followup_step", None),
-            "followup_sent_at": str(getattr(lead_state, "followup_sent_at", None)),
-            "doss_apresentada": getattr(lead_state, "doss_apresentada", None),
-            "produto_apresentado": getattr(lead_state, "produto_apresentado", None),
+            "lead_criado_em": str(getattr(lead, "created_at", None)) if lead else None,
+            "thread_id": getattr(lead, "thread_id", None) if lead else None,
+            "total_mensagens_historico": msg_count,
+            "primeira_mensagem_em": primeira_msg_em,
+            "ultima_mensagem_em": ultima_msg_em,
+            "stage": lead_state.stage if lead_state else None,
+            "followup_step": getattr(lead_state, "followup_step", None) if lead_state else None,
+            "followup_sent_at": str(getattr(lead_state, "followup_sent_at", None)) if lead_state else None,
+            "doss_apresentada": getattr(lead_state, "doss_apresentada", None) if lead_state else None,
+            "produto_apresentado": getattr(lead_state, "produto_apresentado", None) if lead_state else None,
         }
     finally:
         db.close()
