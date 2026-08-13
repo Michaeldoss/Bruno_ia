@@ -547,6 +547,25 @@ async def manual_send(request: Request):
         return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
 
 
+@router.post("/debug/reset-followup/{phone}")
+async def debug_reset_followup(phone: str):
+    """Reabre o follow-up de um lead fechado erroneamente -- criado 13/08
+    junto com o fix do bug 'card sem dono matava follow-up na largada'.
+    So reseta se o stage estiver 'closed'/'followup_closed'; nao mexe
+    em lead que foi fechado por motivo legitimo (recusa, handoff real)."""
+    resetar_followup(phone)
+    db = SessionLocal()
+    try:
+        phone_limpo = phone.replace("+", "").replace(" ", "")
+        lead_state = db.query(LeadState).filter(LeadState.phone.like(f"%{phone_limpo}%")).first()
+        return {
+            "phone": lead_state.phone if lead_state else None,
+            "stage_apos_reset": lead_state.stage if lead_state else None,
+        }
+    finally:
+        db.close()
+
+
 @router.get("/debug/lead-state/{phone}")
 async def debug_lead_state(phone: str):
     """Consulta rapida do LeadState/Lead de um telefone -- criado 13/08 pra
