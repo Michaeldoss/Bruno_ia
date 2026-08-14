@@ -657,12 +657,14 @@ async def debug_lead_state(phone: str):
         msg_count = None
         primeira_msg_em = None
         ultima_msg_em = None
+        mensagens = []
         if lead:
             msgs = db.query(Conversation).filter(Conversation.phone == lead.phone).order_by(Conversation.id.asc()).all()
             msg_count = len(msgs)
             if msgs:
                 primeira_msg_em = str(getattr(msgs[0], "created_at", None))
                 ultima_msg_em = str(getattr(msgs[-1], "created_at", None))
+                mensagens = [{"role": m.role, "content": (m.content or "")[:300]} for m in msgs]
         if not lead_state and not lead:
             return {"encontrado": False, "phone_buscado": phone_limpo}
         return {
@@ -670,6 +672,7 @@ async def debug_lead_state(phone: str):
             "lead_criado_em": str(getattr(lead, "created_at", None)) if lead else None,
             "thread_id": getattr(lead, "thread_id", None) if lead else None,
             "total_mensagens_historico": msg_count,
+            "mensagens": mensagens,
             "primeira_mensagem_em": primeira_msg_em,
             "ultima_mensagem_em": ultima_msg_em,
             "stage": lead_state.stage if lead_state else None,
