@@ -10,6 +10,7 @@ from app.services.followup_service import resetar_followup
 from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
 from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently, vendedor_humano_do_contato, criar_lead_no_pipeline_com_retry as criar_lead_no_pipeline
 from app.models.database import SessionLocal, Lead, MediaSent, Conversation, LeadState
+from sqlalchemy import text
 from app.config import get_settings
 import logging
 import asyncio
@@ -506,6 +507,23 @@ async def handle_async_response(
 
     except Exception as exc:
         logger.error("Erro no processamento para %s: %s", phone, exc, exc_info=True)
+        # Debug 14/08: erro so ia pro log do Render, sem visibilidade
+        # remota nenhuma -- causa raiz de "Bruno parou de responder"
+        # ficava invisivel. Grava tambem numa tabela simples, consultavel
+        # via /debug/errors, sem depender de acesso a shell.
+        try:
+            import traceback as _tb
+            db.execute(text(
+                "CREATE TABLE IF NOT EXISTS debug_errors "
+                "(id SERIAL PRIMARY KEY, phone TEXT, erro TEXT, traceback TEXT, criado_em TIMESTAMP DEFAULT now())"
+            ))
+            db.execute(
+                text("INSERT INTO debug_errors (phone, erro, traceback) VALUES (:phone, :erro, :tb)"),
+                {"phone": phone, "erro": str(exc)[:2000], "tb": _tb.format_exc()[:4000]},
+            )
+            db.commit()
+        except Exception:
+            pass
     finally:
         db.close()
 
@@ -569,6 +587,33 @@ async def debug_reset_followup(phone: str):
             "phone": lead_state.phone,
             "stage_antes": stage_antes,
             "stage_apos_reset": lead_state.stage,
+        }
+    finally:
+        db.close()
+
+
+@router.get("/debug/errors")
+async def debug_errors(limite: int = 10):
+    """Ultimos erros capturados no processamento de mensagem -- criado
+    14/08 pra diagnosticar 'Bruno parou de responder' sem acesso a
+    shell do Render."""
+    db = SessionLocal()
+    try:
+        db.execute(text(
+            "CREATE TABLE IF NOT EXISTS debug_errors "
+            "(id SERIAL PRIMARY KEY, phone TEXT, erro TEXT, traceback TEXT, criado_em TIMESTAMP DEFAULT now())"
+        ))
+        db.commit()
+        rows = db.execute(
+            text("SELECT phone, erro, traceback, criado_em FROM debug_errors ORDER BY id DESC LIMIT :lim"),
+            {"lim": limite},
+        ).fetchall()
+        return {
+            "total": len(rows),
+            "erros": [
+                {"phone": r[0], "erro": r[1], "traceback": r[2], "criado_em": str(r[3])}
+                for r in rows
+            ],
         }
     finally:
         db.close()
