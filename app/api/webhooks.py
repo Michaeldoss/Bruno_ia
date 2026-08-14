@@ -338,6 +338,25 @@ async def process_deferred_message(phone: str, combined_message: str):
     await handle_async_response(phone, combined_message, None, None)
 
 
+def _log_debug_evento(phone: str, evento: str):
+    """Grava um rastro leve de por onde a mensagem passou/saiu --
+    reusa a tabela debug_errors (campo 'erro' vira o nome do evento)."""
+    try:
+        db2 = SessionLocal()
+        db2.execute(text(
+            "CREATE TABLE IF NOT EXISTS debug_errors "
+            "(id SERIAL PRIMARY KEY, phone TEXT, erro TEXT, traceback TEXT, criado_em TIMESTAMP DEFAULT now())"
+        ))
+        db2.execute(
+            text("INSERT INTO debug_errors (phone, erro, traceback) VALUES (:phone, :erro, :tb)"),
+            {"phone": phone, "erro": f"[RASTRO] {evento}", "tb": None},
+        )
+        db2.commit()
+        db2.close()
+    except Exception:
+        pass
+
+
 async def handle_async_response(
     phone: str,
     user_message: Optional[str],
@@ -347,8 +366,10 @@ async def handle_async_response(
 ):
     db = SessionLocal()
     try:
+        _log_debug_evento(phone, "entrou em handle_async_response")
         lead_state = db.query(LeadState).filter(LeadState.phone == phone).first()
         if lead_state and lead_state.stage == "closed":
+            _log_debug_evento(phone, "SAIU: lead_state.stage == closed")
             if not already_mirrored:
                 if user_message:
                     fire_and_forget(log_message_to_crm(phone, user_message, is_from_contact=True))
@@ -359,6 +380,7 @@ async def handle_async_response(
             return
 
         if await human_active_recently(phone):
+            _log_debug_evento(phone, "SAIU: human_active_recently == True")
             if not already_mirrored:
                 if user_message:
                     fire_and_forget(log_message_to_crm(phone, user_message, is_from_contact=True))
@@ -374,6 +396,7 @@ async def handle_async_response(
         # contato ja tendo vendedor humano definido no cadastro
         # (contacts.primary_agent_id). So mirror pro CRM, sem responder.
         if await vendedor_humano_do_contato(phone):
+            _log_debug_evento(phone, "SAIU: vendedor_humano_do_contato == True")
             if not already_mirrored:
                 if user_message:
                     fire_and_forget(log_message_to_crm(phone, user_message, is_from_contact=True))
@@ -383,6 +406,7 @@ async def handle_async_response(
                         fire_and_forget(log_message_to_crm(phone, f"[ÁUDIO] {transcription}", is_from_contact=True))
             return
 
+        _log_debug_evento(phone, "passou dos 3 checks, indo pra geracao de resposta")
         lead = db.query(Lead).filter(Lead.phone == phone).first()
         eh_lead_novo = lead is None
         if not lead:
