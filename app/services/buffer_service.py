@@ -5,6 +5,27 @@ from typing import Dict, List, Optional, Callable, Any
 
 logger = logging.getLogger(__name__)
 
+
+def _log_debug_evento(phone: str, evento: str):
+    """Rastro leve pra diagnostico 14/08 -- ve por onde a mensagem passa
+    sem precisar de acesso a log do Render."""
+    try:
+        from app.models.database import SessionLocal
+        from sqlalchemy import text
+        db2 = SessionLocal()
+        db2.execute(text(
+            "CREATE TABLE IF NOT EXISTS debug_errors "
+            "(id SERIAL PRIMARY KEY, phone TEXT, erro TEXT, traceback TEXT, criado_em TIMESTAMP DEFAULT now())"
+        ))
+        db2.execute(
+            text("INSERT INTO debug_errors (phone, erro, traceback) VALUES (:phone, :erro, :tb)"),
+            {"phone": phone, "erro": f"[BUFFER] {evento}", "tb": None},
+        )
+        db2.commit()
+        db2.close()
+    except Exception:
+        pass
+
 class MessageBuffer:
     def __init__(self, debounce_seconds: float = 6.0):
         self.buffer: Dict[str, Dict[str, Any]] = {}
@@ -30,6 +51,7 @@ class MessageBuffer:
         Adiciona uma mensagem ao buffer de um telefone.
         Se não houver um 'waiter' ativo, inicia um em background (não bloqueia).
         """
+        _log_debug_evento(phone, "add_message chamado")
         if phone not in self.buffer:
             self.buffer[phone] = {
                 "messages": [],
@@ -50,6 +72,7 @@ class MessageBuffer:
         """
         Aguarda o silêncio (debounce) e dispara o processamento.
         """
+        _log_debug_evento(phone, "_wait_and_trigger iniciado")
         try:
             while True:
                 elapsed = time.time() - self.buffer[phone]["last_received"]
@@ -65,10 +88,13 @@ class MessageBuffer:
             # Limpa o buffer ANTES de disparar
             del self.buffer[phone]
 
+            _log_debug_evento(phone, f"debounce OK, chamando callback com {len(messages)} msgs")
             logger.info(f"Debounce finalizado para {phone}. Enviando {len(messages)} mensagens agrupadas.")
             await callback(phone, combined_message)
+            _log_debug_evento(phone, "callback retornou sem excecao")
 
         except Exception as e:
+            _log_debug_evento(phone, f"EXCECAO no _wait_and_trigger: {e}")
             logger.error(f"Erro no buffer para {phone}: {e}")
             if phone in self.buffer:
                 del self.buffer[phone]
