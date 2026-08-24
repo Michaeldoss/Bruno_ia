@@ -89,7 +89,7 @@ def _seconds_until_next_window(now: Optional[datetime] = None) -> float:
         if delta_days == 0:
             continue
     return CYCLE_INTERVAL_SECONDS
-MAX_ANALYSES_PER_CYCLE = int(os.getenv("CRM_AI_MAX_ANALYSES_PER_CYCLE", "25"))
+MAX_ANALYSES_PER_CYCLE = int(os.getenv("CRM_AI_MAX_ANALYSES_PER_CYCLE", "300"))
 MAX_INITIAL_MESSAGES = int(os.getenv("CRM_AI_MAX_INITIAL_MESSAGES", "40"))
 MAX_DELTA_MESSAGES = int(os.getenv("CRM_AI_MAX_DELTA_MESSAGES", "40"))
 CONTEXT_MESSAGES = int(os.getenv("CRM_AI_CONTEXT_MESSAGES", "6"))
@@ -677,18 +677,25 @@ async def run_crm_memory_cycle() -> None:
         return
 
     logger.info(
-        "[CRM MEMORY] Ciclo incremental iniciado. Custo mensal estimado: R$ %.2f / R$ %.2f",
+        "[CRM MEMORY] Revisao diaria iniciada (so contatos com mensagem hoje). Custo mensal estimado: R$ %.2f / R$ %.2f",
         _monthly_usage_brl(),
         MONTHLY_BUDGET_BRL,
     )
     analyzed = 0
     skipped = 0
+    # Pedido 24/08: so revisa contato que teve mensagem NO DIA de hoje
+    # (Brasilia). Quem nao foi chamado/nao respondeu hoje fica de fora
+    # do lote inteiro -- a ultima memoria salva continua valendo, sem
+    # gastar chamada de IA em cima de conversa parada.
+    inicio_hoje_brasilia = datetime.now(BRASILIA_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    inicio_hoje_utc_iso = inicio_hoje_brasilia.astimezone(timezone.utc).isoformat()
     async with httpx.AsyncClient(timeout=30.0) as client:
         conv_res = await client.get(
             f"{SUPABASE_URL}/rest/v1/conversations",
             params={
                 "org_id": f"eq.{ORG_ID}",
                 "status": "eq.open",
+                "last_message_at": f"gte.{inicio_hoje_utc_iso}",
                 "select": "id,org_id,contact_id,agent_id,status,last_message,last_message_at,created_at,whatsapp_phone,whatsapp_instance,contacts(id,name,company,phone,email,address_city,address_state),profiles(id,name,email)",
                 "order": "last_message_at.asc.nullslast",
                 "limit": 500,

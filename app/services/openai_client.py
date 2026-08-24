@@ -143,15 +143,6 @@ SIMPLE_KEYWORDS = [
 ]
 
 def choose_model(user_message: str, historico_count: int = 0) -> str:
-    from app.services.usage_tracker import status_orcamento_mensal
-    status = status_orcamento_mensal()
-    if status == "economia":
-        # Teto de 24/08: perto do limite mensal (>=80%), Sonnet fica caro
-        # demais pra manter -- forca Haiku em tudo ate o mes virar.
-        # Bruno continua respondendo, so mais econômico.
-        logger.info("Roteamento: HAIKU (modo economia -- perto do teto mensal)")
-        return MODEL_HAIKU
-
     if historico_count > 0:
         logger.info("Roteamento: SONNET (histórico existente)")
         return MODEL_SONNET
@@ -1392,17 +1383,6 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
 
         # ── Decide modelo com historico_count ─────────────────────────────
         model = choose_model(user_message, historico_count)
-
-        # ── Teto mensal de 24/08: 100% estourado, nem Haiku roda mais ─────
-        # Modo economia (choose_model) ja forca Haiku a partir de 80% do
-        # teto, mas Haiku ainda tem custo -- se mesmo assim passar de
-        # 100%, para de chamar a API de vez em vez de deixar o gasto
-        # continuar subindo devagar. Cliente recebe aviso e vai pra fila
-        # de humano (mesmo padrao ja usado pra saldo insuficiente).
-        from app.services.usage_tracker import status_orcamento_mensal
-        if status_orcamento_mensal() == "estourado":
-            await _alertar_admin_teto_mensal()
-            return ["Já te retorno, só um instante."]
 
         # ── Tabela de preços só para Sonnet ───────────────────────────────
         if model == MODEL_SONNET:
