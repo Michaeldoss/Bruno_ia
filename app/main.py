@@ -341,6 +341,24 @@ def usage_data():
                 agrupado[m]["custo"] = round(agrupado[m]["custo"], 4)
             return agrupado
 
+        def por_origem(logs):
+            """Separa o que e conversa de venda de verdade (agente='bruno')
+            do que e o job de re-analise de memoria rodando sozinho em
+            segundo plano (agente='crm_memory'). Pedido 24/08: confirmar
+            se o job de fundo e o que mais pesa no custo."""
+            agrupado = {}
+            for l in logs:
+                if (l.servico or "anthropic") != "anthropic":
+                    continue
+                o = l.agente or "bruno"
+                if o not in agrupado:
+                    agrupado[o] = {"custo": 0.0, "chamadas": 0}
+                agrupado[o]["custo"] += l.custo_usd or 0
+                agrupado[o]["chamadas"] += 1
+            for o in agrupado:
+                agrupado[o]["custo"] = round(agrupado[o]["custo"], 4)
+            return agrupado
+
         # Gasto por dia, últimos 7 dias (para gráfico)
         gasto_por_dia = defaultdict(float)
         for l in logs_7d:
@@ -390,6 +408,8 @@ def usage_data():
                 "custo_total_usd": custo_total_mes,
             },
             "por_servico_30d": por_servico(logs_30d),
+            "por_origem_30d": por_origem(logs_30d),
+            "por_origem_hoje": por_origem(logs_hoje),
             "custos_fixos_mensais": CUSTOS_FIXOS_MENSAIS_USD,
             "grafico_diario": {
                 "labels": dias_labels,
