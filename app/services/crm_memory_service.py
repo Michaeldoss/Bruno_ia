@@ -51,7 +51,14 @@ USD_BRL_SAFETY_RATE = float(os.getenv("CRM_AI_USD_BRL", "6.00"))
 # Reduz de 168 execucoes/semana para ~25/semana (~85% menos chamadas).
 # ---------------------------------------------------------------------------
 BRASILIA_TZ = ZoneInfo("America/Sao_Paulo")
-CYCLE_INTERVAL_SECONDS = 2 * 3600  # 2 em 2 horas
+# Pedido 24/08: crm_memory (job de fundo que reanalisa TODAS as conversas
+# abertas da org, nao so do Bruno) estava consumindo 58% do gasto Anthropic
+# do mes (3.351 chamadas em 30 dias, contra 261 da conversa de venda de
+# verdade). Reduzido de 2h/60-analises pra 3h/25-analises por ciclo --
+# mantem o escopo (todos os agentes, decisao explicita do Michael), so
+# reduz frequencia e volume. Ambos configuraveis por env var, sem precisar
+# de deploy pra ajustar de novo.
+CYCLE_INTERVAL_SECONDS = int(os.getenv("CRM_AI_CYCLE_INTERVAL_SECONDS", str(3 * 3600)))  # 3 em 3 horas
 BUSINESS_WINDOWS = [(8, 12), (13, 18)]  # (inicio_incl, fim_excl), hora local
 
 
@@ -82,7 +89,7 @@ def _seconds_until_next_window(now: Optional[datetime] = None) -> float:
         if delta_days == 0:
             continue
     return CYCLE_INTERVAL_SECONDS
-MAX_ANALYSES_PER_CYCLE = int(os.getenv("CRM_AI_MAX_ANALYSES_PER_CYCLE", "60"))
+MAX_ANALYSES_PER_CYCLE = int(os.getenv("CRM_AI_MAX_ANALYSES_PER_CYCLE", "25"))
 MAX_INITIAL_MESSAGES = int(os.getenv("CRM_AI_MAX_INITIAL_MESSAGES", "40"))
 MAX_DELTA_MESSAGES = int(os.getenv("CRM_AI_MAX_DELTA_MESSAGES", "40"))
 CONTEXT_MESSAGES = int(os.getenv("CRM_AI_CONTEXT_MESSAGES", "6"))
