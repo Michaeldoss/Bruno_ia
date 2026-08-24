@@ -76,6 +76,40 @@ async def _alertar_admin_saldo_insuficiente(erro) -> None:
         )
     except Exception as alert_error:
         logger.error("Falha ao enviar alerta de saldo insuficiente: %s", alert_error)
+
+
+_ultimo_alerta_teto = {"quando": None}
+
+
+async def _alertar_admin_teto_mensal() -> None:
+    """Alerta 24/08: pedido de Michael pra travar gasto Anthropic em
+    US$20/mes. Diferente de saldo insuficiente (esse e sobre limite que
+    o proprio Michael configurou, nao falta de credito real). Mesma
+    ressalva: esse alerta via WhatsApp so entrega se Michael tiver
+    mandado mensagem pro numero do Bruno nas ultimas 24h (limite da
+    API do WhatsApp) -- por isso o status tambem fica visivel direto
+    no /api/usage-data e /dashboard, que nao depende de WhatsApp."""
+    from datetime import datetime, timedelta
+
+    agora = datetime.utcnow()
+    ultimo = _ultimo_alerta_teto["quando"]
+    if ultimo and (agora - ultimo) < timedelta(hours=6):
+        return
+
+    _ultimo_alerta_teto["quando"] = agora
+    try:
+        await twilio_service.send_whatsapp_message(
+            to=_ADMIN_ALERT_PHONE,
+            body=(
+                "🛑 Bruno IA atingiu o teto mensal de gasto que você configurou "
+                f"(US${os.getenv('TETO_MENSAL_ANTHROPIC_USD', '20')}). "
+                "Parei de responder por IA até o mês virar, pra não passar do limite. "
+                "Clientes novos vão precisar de atendimento manual até lá -- "
+                "ou aumente o teto (TETO_MENSAL_ANTHROPIC_USD no Render) se quiser continuar."
+            ),
+        )
+    except Exception as alert_error:
+        logger.error("Falha ao enviar alerta de teto mensal: %s", alert_error)
 from app.services.web_search_helper import precisa_buscar_concorrente, buscar_info_concorrente
 
 settings = get_settings()
@@ -109,6 +143,15 @@ SIMPLE_KEYWORDS = [
 ]
 
 def choose_model(user_message: str, historico_count: int = 0) -> str:
+    from app.services.usage_tracker import status_orcamento_mensal
+    status = status_orcamento_mensal()
+    if status == "economia":
+        # Teto de 24/08: perto do limite mensal (>=80%), Sonnet fica caro
+        # demais pra manter -- forca Haiku em tudo ate o mes virar.
+        # Bruno continua respondendo, so mais econômico.
+        logger.info("Roteamento: HAIKU (modo economia -- perto do teto mensal)")
+        return MODEL_HAIKU
+
     if historico_count > 0:
         logger.info("Roteamento: SONNET (histórico existente)")
         return MODEL_SONNET
@@ -1349,6 +1392,17 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
 
         # ── Decide modelo com historico_count ─────────────────────────────
         model = choose_model(user_message, historico_count)
+
+        # ── Teto mensal de 24/08: 100% estourado, nem Haiku roda mais ─────
+        # Modo economia (choose_model) ja forca Haiku a partir de 80% do
+        # teto, mas Haiku ainda tem custo -- se mesmo assim passar de
+        # 100%, para de chamar a API de vez em vez de deixar o gasto
+        # continuar subindo devagar. Cliente recebe aviso e vai pra fila
+        # de humano (mesmo padrao ja usado pra saldo insuficiente).
+        from app.services.usage_tracker import status_orcamento_mensal
+        if status_orcamento_mensal() == "estourado":
+            await _alertar_admin_teto_mensal()
+            return ["Já te retorno, só um instante."]
 
         # ── Tabela de preços só para Sonnet ───────────────────────────────
         if model == MODEL_SONNET:

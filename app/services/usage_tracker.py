@@ -5,10 +5,65 @@ Cobre: Anthropic (Claude), Twilio (WhatsApp), OpenAI (Whisper).
 Render/hospedagem e custo fixo, configurado manualmente (ver CUSTOS_FIXOS_MENSAIS_USD).
 """
 
+import os
 import logging
+from datetime import datetime, timezone
 from app.models.database import SessionLocal, UsageLog
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# TETO MENSAL DE GASTO ANTHROPIC — pedido 24/08: maximo US$20/mes.
+# Degrada em 2 estagios em vez de cortar tudo de uma vez: perto do teto
+# (80%) forca Haiku pra tudo (bem mais barato que Sonnet, ~5x); no teto
+# (100%) para de gerar resposta por IA e entrega pra humano, com aviso.
+# ---------------------------------------------------------------------------
+TETO_MENSAL_ANTHROPIC_USD = float(os.getenv("TETO_MENSAL_ANTHROPIC_USD", "20.0"))
+LIMIAR_ECONOMIA_PCT = float(os.getenv("LIMIAR_ECONOMIA_PCT", "0.80"))  # 80% do teto
+
+
+_cache_orcamento = {"gasto": 0.0, "quando": None}
+
+
+def custo_anthropic_mes_atual(usar_cache: bool = True) -> float:
+    """Soma o custo real (calculado por token, nao estimado) de todas as
+    chamadas Anthropic desde o dia 1 do mes corrente (UTC). Cacheado por
+    2 minutos -- checagem roda em toda mensagem, nao precisa ser
+    perfeitamente em tempo real pra um teto mensal."""
+    agora = datetime.now(timezone.utc)
+    if usar_cache and _cache_orcamento["quando"]:
+        if (agora - _cache_orcamento["quando"]).total_seconds() < 120:
+            return _cache_orcamento["gasto"]
+
+    db = SessionLocal()
+    try:
+        inicio_mes = agora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        total = (
+            db.query(UsageLog)
+            .filter(UsageLog.servico == "anthropic", UsageLog.created_at >= inicio_mes)
+            .with_entities(UsageLog.custo_usd)
+            .all()
+        )
+        gasto = round(sum(c[0] or 0 for c in total), 4)
+        _cache_orcamento["gasto"] = gasto
+        _cache_orcamento["quando"] = agora
+        return gasto
+    except Exception as e:
+        logger.error(f"[USAGE] Erro ao calcular custo mensal (assumindo 0, falha aberta): {e}")
+        return 0.0
+    finally:
+        db.close()
+
+
+def status_orcamento_mensal() -> str:
+    """Retorna 'normal', 'economia' ou 'estourado' de acordo com o gasto
+    Anthropic acumulado no mes atual vs TETO_MENSAL_ANTHROPIC_USD."""
+    gasto = custo_anthropic_mes_atual()
+    if gasto >= TETO_MENSAL_ANTHROPIC_USD:
+        return "estourado"
+    if gasto >= TETO_MENSAL_ANTHROPIC_USD * LIMIAR_ECONOMIA_PCT:
+        return "economia"
+    return "normal"
 
 # ---------------------------------------------------------------------------
 # PRECOS — Anthropic (USD por milhao de tokens), Junho/2026

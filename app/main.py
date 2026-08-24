@@ -10,6 +10,7 @@ from app.services.crm_inbox_client import start_crm_sync_worker
 from app.models.database import SessionLocal, Conversation, Lead, LeadState, UsageLog
 from datetime import datetime, timedelta
 from collections import defaultdict
+import os
 import re
 
 settings = get_settings()
@@ -395,6 +396,15 @@ def usage_data():
                 "valores": dias_valores,
             },
             "projecao_mensal_usd": projecao_total_mensal,
+            "teto_mensal_anthropic": {
+                "teto_usd": float(os.getenv("TETO_MENSAL_ANTHROPIC_USD", "20.0")),
+                "gasto_anthropic_mes_usd": custo_variavel_mes,
+                "status": (
+                    "estourado" if custo_variavel_mes >= float(os.getenv("TETO_MENSAL_ANTHROPIC_USD", "20.0"))
+                    else "economia" if custo_variavel_mes >= float(os.getenv("TETO_MENSAL_ANTHROPIC_USD", "20.0")) * 0.8
+                    else "normal"
+                ),
+            },
             "atualizado_em": agora.strftime("%d/%m/%Y %H:%M:%S"),
         }
     finally:
