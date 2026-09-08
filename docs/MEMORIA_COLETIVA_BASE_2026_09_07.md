@@ -35,3 +35,19 @@ Não há migração de esquema nesta entrega. Permanecem a revisão diária às 
 ## Verificação e publicação
 
 Verificação de sintaxe Python e whitespace do diff; nenhuma suíte de testes nem atendimento real foi executado, conforme solicitação do usuário. Integração com o banco e comportamento em produção ainda não verificados. Entrega em branch para revisão, sem alteração da main ou implantação.
+
+
+## Continuação — 08/09: utilização da memória nas respostas
+
+A revisão aprofundada confirmou que o Bruno já chama buscar_memoria_ia para recuperar análises de várias conversas do mesmo contato. Portanto, a integração de memória de conversas existe; a lacuna é sua confiabilidade e a ausência de consulta ao conhecimento aprovado, exemplos e projeção customer_ai_memory.
+
+Correções adicionais:
+
+- A consulta do histórico local selecionava as primeiras 40 mensagens em ordem crescente. Agora seleciona as últimas 40, com desempate por ID, e reordena cronologicamente para o modelo. A mensagem atual já é persistida antes dessa consulta.
+- Contatos duplicados para o mesmo telefone deixam de ser escolhidos arbitrariamente: a memória adicional é omitida enquanto a identidade estiver ambígua. Isso não resolve duplicidade cadastral nem telefones compartilhados entre pessoas.
+- A consulta de análises inclui organização e contato explicitamente e mantém a seleção de conversas desse contato.
+- O contexto enviado ao Bruno preserva conversa, responsável, datas e cobertura de cada fonte. Recomendações antigas deixam de ser rotuladas como situação atual e listas inferidas deixam de ser apresentadas como fatos certificados.
+- Recuperação limitada a 100 conversas e 100 análises, com sinalização de limite e ausência de memória. O contexto tem orçamento de 12 mil caracteres de registros; fontes que não couberem ficam fora, com indicação de parcialidade. Essa janela serve à resposta e não representa a capacidade total de armazenamento.
+- Nenhuma nova permissão de leitura nem canal de envio foi habilitado. A recuperação entre setores já existente continua dependendo de revisão das regras de acesso; prompts não substituem autorização no banco.
+
+Verificação: sintaxe dos três módulos alterados e diff; sem suíte de testes e sem mensagens reais. Confirmar leitura com o esquema implantado e qualidade em execução permanece pendente.

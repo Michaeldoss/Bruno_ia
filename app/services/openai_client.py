@@ -1208,13 +1208,13 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         raw_history = (
             db.query(Conversation)
             .filter(Conversation.phone == phone)
-            .order_by(Conversation.created_at.asc())
+            .order_by(Conversation.created_at.desc(), Conversation.id.desc())
             .limit(40)
             .all()
         )
 
         messages = []
-        for msg in raw_history:
+        for msg in reversed(raw_history):
             if not messages or messages[-1]["role"] != msg.role:
                 messages.append({"role": msg.role, "content": msg.content})
             else:
@@ -1449,23 +1449,8 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         except Exception:
             memoria_ia = None
         if memoria_ia:
-            mem_data = memoria_ia.get("memory") if isinstance(memoria_ia.get("memory"), dict) else {}
-            partes_memoria = []
-            if memoria_ia.get("recommended_action"):
-                partes_memoria.append(f"Situacao atual: {memoria_ia['recommended_action']}")
-            for chave, rotulo in [
-                ("facts", "Fatos ja levantados"), ("products", "Produtos de interesse"),
-                ("objections", "Objecoes ja levantadas"), ("promises", "Promessas ja feitas"),
-                ("next_steps", "Proximos passos combinados"), ("preferences", "Preferencias do cliente"),
-            ]:
-                itens = mem_data.get(chave)
-                if isinstance(itens, list) and itens:
-                    partes_memoria.append(f"{rotulo}: {'; '.join(str(i) for i in itens[:6])}")
-            if partes_memoria:
-                system_dinamico += (
-                    "\n\n[MEMORIA DA CONVERSA - ja apurado anteriormente, NAO pergunte de novo o que ja "
-                    "esta aqui, use pra negociar com precisao]:\n" + "\n".join(partes_memoria)
-                )
+            from app.services.memory_context import format_memory_context
+            system_dinamico += format_memory_context(memoria_ia)
 
         # ── Cache na parte estática ────────────────────────────────────────
         system_parts = [
