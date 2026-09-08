@@ -624,7 +624,7 @@ async def _sincronizar_uma_vez(
 
 async def buscar_memoria_ia(phone: str) -> Optional[dict]:
     """Busca e junta a analise mais recente que a IA supervisora ja fez
-    de TODAS as conversas desse contato -- nao so a conversa atual do
+    das conversas mais recentes desse contato (ate 100) -- nao so a conversa atual do
     Bruno. O mesmo cliente pode ja ter falado com um vendedor humano
     (David, Michael, etc) em outra conversa/instancia de WhatsApp, e o
     que foi apurado la (fatos, produtos, objecoes, promessas, proximos
@@ -654,11 +654,14 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
                     "phone": f"eq.{phone_clean}",
                     "org_id": f"eq.{ORG_ID}",
                     "select": "id",
-                    "limit": 1,
+                    "limit": 2,
                 },
                 headers=_headers(),
             )
             if contato.status_code != 200 or not isinstance(contato.json(), list) or not contato.json():
+                return None
+            if len(contato.json()) != 1:
+                logger.warning("[CRM Inbox] Memoria omitida: telefone com contato ambiguo na organizacao")
                 return None
             contact_id = contato.json()[0]["id"]
 
@@ -669,12 +672,15 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
                     "contact_id": f"eq.{contact_id}",
                     "org_id": f"eq.{ORG_ID}",
                     "select": "id",
+                    "order": "last_message_at.desc.nullslast,id.asc",
+                    "limit": 101,
                 },
                 headers=_headers(),
             )
             if convs.status_code != 200 or not isinstance(convs.json(), list) or not convs.json():
                 return None
-            conversation_ids = [c["id"] for c in convs.json()]
+            conversations_truncated = len(convs.json()) > 100
+            conversation_ids = [c["id"] for c in convs.json()[:100]]
 
             # 3. Analise mais recente de CADA uma dessas conversas (nao so
             # a mais recente entre todas -- uma conversa antiga com o
@@ -684,8 +690,11 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
             mems = await client.get(
                 f"{SUPABASE_URL}/rest/v1/conversation_ai_memory",
                 params={
+                    "org_id": f"eq.{ORG_ID}",
+                    "contact_id": f"eq.{contact_id}",
                     "conversation_id": f"in.({id_list})",
-                    "select": "conversation_id,analyzed_at,summary,recommended_action,memory",
+                    "select": "conversation_id,agent_id,analyzed_at,last_message_at,summary,recommended_action,memory,raw_analysis",
+                    "limit": 101,
                     "order": "analyzed_at.desc",
                 },
                 headers=_headers(),
@@ -693,7 +702,8 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
             if mems.status_code != 200 or not isinstance(mems.json(), list) or not mems.json():
                 return None
 
-            registros = mems.json()
+            records_truncated = len(mems.json()) > 100
+            registros = mems.json()[:100]
             # Uma analise mais recente por conversation_id (a tabela pode
             # ter historico de varias analises da mesma conversa).
             por_conversa = {}
@@ -725,9 +735,20 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
                 "customer_intent": mais_recente.get("customer_intent"),
                 "memory": memoria_unificada,
                 "conversas_consideradas": len(analises),
+                "retrieval_complete": not conversations_truncated and not records_truncated and len(analises) == len(conversation_ids),
+                "sources": [{"conversation_id": row.get("conversation_id"),
+                             "agent_id": row.get("agent_id"),
+                             "analyzed_at": row.get("analyzed_at"),
+                             "last_message_at": row.get("last_message_at"),
+                             "memory": row.get("memory"),
+                             "summary": row.get("summary"),
+                             "recommended_action": row.get("recommended_action"),
+                             "coverage": (row.get("raw_analysis") or {}).get("coverage")
+                                         if isinstance(row.get("raw_analysis"), dict) else None}
+                            for row in analises],
             }
     except Exception as e:
-        logger.error(f"[CRM Inbox] Falha ao buscar memoria da IA ({phone}): {e}")
+        logger.error("[CRM Inbox] Falha ao buscar memoria da IA: %s", type(e).__name__)
         return None
 
 
