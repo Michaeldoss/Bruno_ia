@@ -30,7 +30,8 @@ from sqlalchemy import func
 
 from app.config import get_settings
 from app.models.database import SessionLocal, UsageLog
-from app.services.usage_tracker import registrar_uso_anthropic
+from app.services.usage_tracker import (registrar_uso_anthropic, custo_anthropic_mes_atual,
+                                        TETO_MENSAL_ANTHROPIC_USD, LIMIAR_ECONOMIA_PCT)
 from app.services.memory_checkpoint import (MEMORY_FIELDS, checkpoint_of, cursor_filter, make_coverage, valid_analysis)
 
 settings = get_settings()
@@ -163,16 +164,25 @@ def _monthly_usage_brl() -> float:
         )
         return round(float(value or 0.0) * USD_BRL_SAFETY_RATE, 2)
     except Exception as exc:
-        # Em caso de falha no medidor, o ciclo continua limitado por quantidade
-        # e por delta; nunca volta ao comportamento de reler tudo.
+        # Sem medicao confiavel, suspender novas analises pagas.
         logger.error("[CRM MEMORY] Falha ao consultar custo mensal: %s", exc)
-        return 0.0
+        return float("inf")
     finally:
         if db:
             db.close()
 
 
 def _budget_available() -> bool:
+    try:
+        global_used = custo_anthropic_mes_atual(usar_cache=False, falhar_em_erro=True)
+    except Exception:
+        logger.error("[CRM MEMORY] Revisao pausada: medidor global indisponivel")
+        return False
+    # Preserve the existing global ceiling and reserve its last portion for live service.
+    reserve_threshold = TETO_MENSAL_ANTHROPIC_USD * max(0.0, min(LIMIAR_ECONOMIA_PCT, 1.0))
+    if global_used >= reserve_threshold:
+        logger.warning("[CRM MEMORY] Revisao pausada para preservar orcamento de atendimento")
+        return False
     used = _monthly_usage_brl()
     if used >= MONTHLY_BUDGET_BRL:
         logger.error(

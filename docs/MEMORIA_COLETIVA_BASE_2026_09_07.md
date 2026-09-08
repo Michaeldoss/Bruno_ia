@@ -51,3 +51,16 @@ Correções adicionais:
 - Nenhuma nova permissão de leitura nem canal de envio foi habilitado. A recuperação entre setores já existente continua dependendo de revisão das regras de acesso; prompts não substituem autorização no banco.
 
 Verificação: sintaxe dos três módulos alterados e diff; sem suíte de testes e sem mensagens reais. Confirmar leitura com o esquema implantado e qualidade em execução permanece pendente.
+
+
+## Continuação — orçamento e conhecimento aprovado
+
+A busca por referências de uso confirmou que status_orcamento_mensal não é chamada pelo atendimento. O valor US$20 declarado não deve ser apresentado como bloqueio efetivo das respostas. Esta entrega não instala um corte abrupto no atendimento.
+
+O ciclo noturno agora consulta o consumo global registrado, sem cache, e interrompe novas análises ao atingir o limiar de economia configurado (padrão: 80% de US$20 = US$16). Também respeita o orçamento próprio em reais. Se o medidor falhar, suspende a análise. O limite próprio de R$250 não é adicional ao global: prevalece o primeiro controle atingido. O horário permanece 19h de Brasília. São limites de estimativas registradas, não garantia de cobrança máxima: não há reserva transacional, chamadas concorrentes ou custos não registrados podem ultrapassar o limiar. Áudio, WhatsApp e hospedagem não entram nesse controle Anthropic.
+
+O atendimento passa a consultar bruno_knowledge na mesma organização, somente registros ativos e aprovados. Seleciona até 6 registros inteiros dentro de 6 mil caracteres, entre 30 candidatos por confiança; ordena por correspondência textual com a mensagem atual. Inclui IDs e títulos das fontes no contexto. A seleção é limitada e não equivale a busca semântica sobre toda a empresa. Não usa cache entre respostas; a próxima consulta observa mudanças de aprovação. Falhas na consulta não derrubam o atendimento e indicam ao modelo que a fonte ficou indisponível.
+
+Essa consulta não faz outra chamada de geração, mas o contexto adicional aumenta o consumo de entrada da resposta. Há prazo total de 4 segundos para a leitura. Exemplos de clientes não foram adicionados ao conhecimento compartilhado: precisam de revisão e remoção de dados pessoais. Conteúdo interno requer classificação e regras de acesso antes de ampliar autonomia; instruções no prompt não substituem controle de acesso.
+
+Verificação desta etapa: compilação de sintaxe Python e revisão do diff; sem suíte de testes, sem chamadas pagas e sem envio de mensagens a clientes. Publicação somente em branch de revisão.
