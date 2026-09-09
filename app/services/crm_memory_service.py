@@ -32,6 +32,7 @@ from app.config import get_settings
 from app.models.database import SessionLocal, UsageLog
 from app.services.usage_tracker import (registrar_uso_anthropic, custo_anthropic_mes_atual,
                                         TETO_MENSAL_ANTHROPIC_USD, LIMIAR_ECONOMIA_PCT)
+from app.services.memory_schedule import fair_memory_order
 from app.services.memory_checkpoint import (MEMORY_FIELDS, checkpoint_of, cursor_filter, make_coverage, valid_analysis)
 
 settings = get_settings()
@@ -790,45 +791,59 @@ async def run_crm_memory_cycle() -> None:
     )
     analyzed = 0
     skipped = 0
-    # Read all statuses and dates. Stable pagination lets old backlog survive day changes.
+    failed = 0
+    deferred = 0
     async with httpx.AsyncClient(timeout=30.0) as client:
-        offset = 0
-        stop = False
-        while not stop:
-            conv_res = await client.get(
-                f"{SUPABASE_URL}/rest/v1/conversations",
-                params={"org_id": f"eq.{ORG_ID}",
-                        "select": "id,org_id,contact_id,agent_id,status,last_message_at,created_at,contacts(id,name,company,phone),profiles(id,name,department)",
-                        "order": "id.asc", "offset": offset, "limit": 500},
-                headers=_headers(),
-            )
-            conv_res.raise_for_status()
-            conversations = conv_res.json()
-            if not isinstance(conversations, list):
-                raise ValueError("Invalid conversations response")
-            if not conversations:
+        async def read_schedule_rows(table, select, key):
+            rows = []
+            after = None
+            while True:
+                params = {"org_id": f"eq.{ORG_ID}", "select": select,
+                          "order": f"{key}.asc", "limit": 500}
+                if after:
+                    params[key] = f"gt.{after}"
+                response = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/{table}", params=params, headers=_headers())
+                response.raise_for_status()
+                page = response.json()
+                if not isinstance(page, list):
+                    raise ValueError("Invalid memory scheduling response")
+                if not page:
+                    return rows
+                next_key = page[-1][key]
+                if after is not None and next_key <= after:
+                    raise ValueError("Memory scheduling pagination did not advance")
+                rows.extend(page)
+                after = next_key
+
+        # Read scheduling metadata first; never silently schedule from a partial page.
+        conversations = await read_schedule_rows(
+            "conversations",
+            "id,org_id,contact_id,agent_id,status,last_message_at,created_at,contacts(id,name,company,phone),profiles(id,name,department)",
+            "id")
+        memories = await read_schedule_rows(
+            "conversation_ai_memory", "conversation_id,analyzed_at", "conversation_id")
+        day = datetime.now(BRASILIA_TZ).date().isoformat()
+        schedule = list(fair_memory_order(conversations, memories, day))
+        for index, conversation in enumerate(schedule):
+            if analyzed + failed >= MAX_ANALYSES_PER_CYCLE or not _budget_available():
+                deferred = len(schedule) - index
                 break
-            offset += len(conversations)
-            for conversation in conversations:
-                if analyzed >= MAX_ANALYSES_PER_CYCLE or not _budget_available():
-                    stop = True
-                    break
-                try:
-                    used_ai = await _process_conversation(client, conversation)
-                    if used_ai:
-                        analyzed += 1
-                    else:
-                        skipped += 1
-                except Exception:
-                    # Count failures against the cycle cap: the provider may already have billed a call.
+            try:
+                used_ai = await _process_conversation(client, conversation)
+                if used_ai:
                     analyzed += 1
-                    logger.exception("[CRM MEMORY] Falha; retomar checkpoint da conversa %s", conversation.get("id"))
+                else:
+                    skipped += 1
+            except Exception:
+                # A failed attempt may already have incurred a provider charge.
+                failed += 1
+                logger.exception("[CRM MEMORY] Falha; retomar checkpoint da conversa %s", conversation.get("id"))
 
     logger.info(
-        "[CRM MEMORY] Ciclo finalizado: %s analisadas com IA, %s ignoradas/atualizadas sem IA. Custo mensal: R$ %.2f.",
-        analyzed,
-        skipped,
-        _monthly_usage_brl(),
+        "[CRM MEMORY] Ciclo finalizado: %s usos de IA retornados, %s sem IA, "
+        "%s tentativas com falha, %s conversas adiadas pelo limite. Custo mensal: R$ %.2f.",
+        analyzed, skipped, failed, deferred, _monthly_usage_brl(),
     )
 
 
