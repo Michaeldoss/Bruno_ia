@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timedelta
@@ -30,8 +31,16 @@ def _memory_worker() -> None:
         logger.info("[CRM MEMORY] Proxima revisao diaria em %.1fh (19h Brasilia).", espera / 3600)
         time.sleep(espera)
         try:
-            from app.services.crm_memory_service import run_crm_memory_cycle
-            asyncio.run(run_crm_memory_cycle())
+            from app.services.crm_memory_service import run_crm_memory_cycle, ORG_ID
+            from app.services.memory_tenant import require_org
+            # Server-managed allowlist; never accept company IDs from incoming messages.
+            configured = os.getenv("CRM_MEMORY_ORG_IDS", ORG_ID)
+            organizations = list(dict.fromkeys(require_org(value.strip()) for value in configured.split(',') if value.strip()))
+            for org_id in organizations:
+                try:
+                    asyncio.run(run_crm_memory_cycle(org_id=org_id))
+                except Exception:
+                    logger.exception("[CRM MEMORY] Falha na organizacao %s", org_id)
         except Exception as exc:
             logger.exception("[CRM MEMORY] Falha na revisao diaria: %s", exc)
         # dorme um pouco alem de imediato pra nao rodar 2x se o calculo

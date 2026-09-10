@@ -32,6 +32,7 @@ from typing import Optional
 import httpx
 
 from app.config import get_settings
+from app.services.memory_tenant import require_org
 from app.models.database import SessionLocal, CrmSyncQueue, PipelineSyncQueue
 
 settings = get_settings()
@@ -622,7 +623,7 @@ async def _sincronizar_uma_vez(
         )
 
 
-async def buscar_memoria_ia(phone: str) -> Optional[dict]:
+async def buscar_memoria_ia(phone: str, *, org_id: str) -> Optional[dict]:
     """Busca e junta a analise mais recente que a IA supervisora ja fez
     das conversas mais recentes desse contato (ate 100) -- nao so a conversa atual do
     Bruno. O mesmo cliente pode ja ter falado com um vendedor humano
@@ -637,6 +638,7 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
     entre todas elas. Nunca levanta excecao -- se falhar, Bruno segue
     sem essa memoria extra, como sempre funcionou.
     """
+    org_id = require_org(org_id)
     if not SUPABASE_KEY or SUPABASE_KEY == "stub":
         return None
 
@@ -652,7 +654,7 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
                 f"{SUPABASE_URL}/rest/v1/contacts",
                 params={
                     "phone": f"eq.{phone_clean}",
-                    "org_id": f"eq.{ORG_ID}",
+                    "org_id": f"eq.{org_id}",
                     "select": "id",
                     "limit": 2,
                 },
@@ -670,7 +672,7 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
                 f"{SUPABASE_URL}/rest/v1/conversations",
                 params={
                     "contact_id": f"eq.{contact_id}",
-                    "org_id": f"eq.{ORG_ID}",
+                    "org_id": f"eq.{org_id}",
                     "select": "id",
                     "order": "last_message_at.desc.nullslast,id.asc",
                     "limit": 101,
@@ -690,7 +692,7 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
             mems = await client.get(
                 f"{SUPABASE_URL}/rest/v1/conversation_ai_memory",
                 params={
-                    "org_id": f"eq.{ORG_ID}",
+                    "org_id": f"eq.{org_id}",
                     "contact_id": f"eq.{contact_id}",
                     "conversation_id": f"in.({id_list})",
                     "select": "conversation_id,agent_id,analyzed_at,last_message_at,summary,recommended_action,memory,raw_analysis",
@@ -736,7 +738,8 @@ async def buscar_memoria_ia(phone: str) -> Optional[dict]:
                 "memory": memoria_unificada,
                 "conversas_consideradas": len(analises),
                 "retrieval_complete": not conversations_truncated and not records_truncated and len(analises) == len(conversation_ids),
-                "sources": [{"conversation_id": row.get("conversation_id"),
+                "org_id": org_id,
+                "sources": [{"org_id": org_id,"conversation_id": row.get("conversation_id"),
                              "agent_id": row.get("agent_id"),
                              "analyzed_at": row.get("analyzed_at"),
                              "last_message_at": row.get("last_message_at"),

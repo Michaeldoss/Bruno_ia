@@ -17,6 +17,7 @@ from app.services.crm_inbox_client import (
     criar_lead_no_pipeline_com_retry as criar_lead_no_pipeline,
     enviar_lead_crm_com_retry as enviar_lead_crm,
     buscar_memoria_ia,
+    ORG_ID as BRUNO_DEPLOYMENT_ORG_ID,
 )
 
 # FIX: 3 pontos nesse arquivo usavam asyncio.create_task(...) direto,
@@ -1446,14 +1447,14 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         # base no que ja foi combinado/prometido em vez de reconstruir
         # tudo do zero a cada mensagem.
         try:
-            memoria_ia = await asyncio.wait_for(buscar_memoria_ia(phone), timeout=4.0)
+            memoria_ia = await asyncio.wait_for(buscar_memoria_ia(phone, org_id=BRUNO_DEPLOYMENT_ORG_ID), timeout=4.0)
         except Exception:
             memoria_ia = None
         if memoria_ia:
             from app.services.memory_context import format_memory_context
             system_dinamico += format_memory_context(memoria_ia)
 
-        system_dinamico += await approved_knowledge_context(user_message)
+        system_dinamico += await approved_knowledge_context(user_message, org_id=BRUNO_DEPLOYMENT_ORG_ID)
 
         # ── Cache na parte estática ────────────────────────────────────────
         system_parts = [
