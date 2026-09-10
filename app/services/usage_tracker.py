@@ -25,7 +25,7 @@ LIMIAR_ECONOMIA_PCT = float(os.getenv("LIMIAR_ECONOMIA_PCT", "0.80"))  # 80% do 
 _cache_orcamento = {"gasto": 0.0, "quando": None}
 
 
-def custo_anthropic_mes_atual(usar_cache: bool = True) -> float:
+def custo_anthropic_mes_atual(usar_cache: bool = True, falhar_em_erro: bool = False) -> float:
     """Soma o custo real (calculado por token, nao estimado) de todas as
     chamadas Anthropic desde o dia 1 do mes corrente (UTC). Cacheado por
     2 minutos -- checagem roda em toda mensagem, nao precisa ser
@@ -49,6 +49,8 @@ def custo_anthropic_mes_atual(usar_cache: bool = True) -> float:
         _cache_orcamento["quando"] = agora
         return gasto
     except Exception as e:
+        if falhar_em_erro:
+            raise
         logger.error(f"[USAGE] Erro ao calcular custo mensal (assumindo 0, falha aberta): {e}")
         return 0.0
     finally:

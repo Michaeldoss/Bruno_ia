@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 _started = False
+_memory_thread = None
 
 BRASILIA_TZ = ZoneInfo("America/Sao_Paulo")
 HORA_REVISAO = 19  # pedido 24/08: 1x/dia, as 19h, nao mais a cada N horas
@@ -22,13 +23,8 @@ def _segundos_ate_19h() -> float:
 
 
 def _memory_worker() -> None:
-    # Pedido 24/08: revisao de IA das conversas passa a rodar 1x/dia,
-    # as 19h, cobrindo so quem teve mensagem NAQUELE dia -- nao mais a
-    # cada 2-3h revisando tudo que esta em aberto. Contato sem interacao
-    # no dia simplesmente nao entra no lote e fica valendo a ultima
-    # memoria salva (run_crm_memory_cycle ja pula quem nao mudou desde
-    # a ultima leitura -- rodando 1x/dia isso naturalmente vira "so quem
-    # teve mensagem hoje").
+    # Revisao diaria as 19h: novos lotes e historico pendente de qualquer data.
+    # Conversas sem mensagens novas nao chamam a IA; limites sao checados no ciclo.
     while True:
         espera = _segundos_ate_19h()
         logger.info("[CRM MEMORY] Proxima revisao diaria em %.1fh (19h Brasilia).", espera / 3600)
@@ -44,13 +40,19 @@ def _memory_worker() -> None:
 
 
 def _start_memory_worker_once() -> None:
-    global _started
+    global _started, _memory_thread
     if _started:
         return
     _started = True
     thread = threading.Thread(target=_memory_worker, name="crm-memory-worker", daemon=True)
+    _memory_thread = thread
     thread.start()
     logger.info("[CRM MEMORY] Worker diario inicializado (revisao as 19h).")
+
+
+def memory_worker_alive() -> bool:
+    """Process liveness only; does not certify a successful nightly analysis."""
+    return _memory_thread is not None and _memory_thread.is_alive()
 
 
 _start_memory_worker_once()
