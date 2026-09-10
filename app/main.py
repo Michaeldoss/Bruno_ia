@@ -12,6 +12,7 @@ from app.models.database import SessionLocal, Conversation, Lead, LeadState, Usa
 from datetime import datetime, timedelta
 from collections import defaultdict
 import os
+import hmac
 import re
 
 settings = get_settings()
@@ -44,6 +45,31 @@ def health_check():
         "release": os.getenv("RENDER_GIT_COMMIT", "unknown")[:40],
         "memory_worker_alive": memory_worker_alive(),
     }
+
+
+@app.get("/api/memory-diagnostics")
+def memory_diagnostics(request: Request):
+    # Installation operator credential; never expose per-company state publicly.
+    expected = settings.BRUNO_API_KEY
+    supplied = request.headers.get("x-bruno-key", "")
+    if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
+        return JSONResponse(status_code=401, content={"error": "Nao autorizado"})
+    from app.services.memory_diagnostics import cycle_snapshot
+    from app.services.crm_memory_service import memory_budget_status, ORG_ID
+    from app.services.memory_tenant import require_org
+    from app.services import _segundos_ate_19h
+    try:
+        organizations = list(dict.fromkeys(require_org(value.strip()) for value in
+            os.getenv("CRM_MEMORY_ORG_IDS", ORG_ID).split(',') if value.strip()))
+    except ValueError:
+        return JSONResponse(status_code=503, content={"error": "invalid_organization_configuration"})
+    return JSONResponse(headers={"Cache-Control": "no-store"}, content={
+        "worker_alive": memory_worker_alive(),
+        "next_scheduled_in_seconds": round(_segundos_ate_19h()),
+        "budget": memory_budget_status(),
+        "cycles": {org_id: cycle_snapshot(org_id) for org_id in organizations},
+        "scope": "current_process_only",
+    })
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -383,6 +409,9 @@ def usage_data():
         custo_fixo_acumulado = round(sum(CUSTOS_FIXOS_MENSAIS_USD.values()) * proporcao_mes, 4)
         custo_fixo_total_mensal = round(sum(CUSTOS_FIXOS_MENSAIS_USD.values()), 2)
 
+        custo_anthropic_mes = soma_custo([entry for entry in logs_mes if entry.servico == "anthropic"])
+        teto_anthropic = float(os.getenv("TETO_MENSAL_ANTHROPIC_USD", "20.0"))
+        limiar_economia = max(0.0, min(float(os.getenv("LIMIAR_ECONOMIA_PCT", "0.80")), 1.0))
         custo_variavel_mes = soma_custo(logs_mes)
         custo_total_mes = round(custo_variavel_mes + custo_fixo_acumulado, 4)
 
@@ -421,10 +450,10 @@ def usage_data():
             "projecao_mensal_usd": projecao_total_mensal,
             "teto_mensal_anthropic": {
                 "teto_usd": float(os.getenv("TETO_MENSAL_ANTHROPIC_USD", "20.0")),
-                "gasto_anthropic_mes_usd": custo_variavel_mes,
+                "gasto_anthropic_mes_usd": custo_anthropic_mes,
                 "status": (
-                    "estourado" if custo_variavel_mes >= float(os.getenv("TETO_MENSAL_ANTHROPIC_USD", "20.0"))
-                    else "economia" if custo_variavel_mes >= float(os.getenv("TETO_MENSAL_ANTHROPIC_USD", "20.0")) * 0.8
+                    "estourado" if custo_anthropic_mes >= teto_anthropic
+                    else "economia" if custo_anthropic_mes >= teto_anthropic * limiar_economia
                     else "normal"
                 ),
             },
