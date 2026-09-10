@@ -33,6 +33,7 @@ from app.models.database import SessionLocal, UsageLog
 from app.services.usage_tracker import (registrar_uso_anthropic, custo_anthropic_mes_atual,
                                         TETO_MENSAL_ANTHROPIC_USD, LIMIAR_ECONOMIA_PCT)
 from app.services.memory_schedule import fair_memory_order
+from app.services.memory_reconciliation import EMPTY_DIGEST, extend_digest, retained_prefix_digest
 from app.services.memory_checkpoint import (MEMORY_FIELDS, checkpoint_of, cursor_filter, make_coverage, valid_analysis)
 
 settings = get_settings()
@@ -645,6 +646,34 @@ async def _consolidate_customer(client: httpx.AsyncClient, conversation: dict) -
     response.raise_for_status()
 
 
+async def _invalidate_changed_history(client, conversation, previous):
+    """Clear derived assertions before rebuilding; source messages remain untouched."""
+    now = datetime.now(timezone.utc).isoformat()
+    cleared = {
+        "summary": "Histórico em reconstrução após conferência de mensagens.",
+        "memory": {}, "analysis_status": "unknown", "priority": "normal",
+        "subject": None, "customer_intent": None, "last_speaker": None,
+        "pending_question": False, "needs_agent_reply": False,
+        "needs_followup": False, "should_close": False,
+        "recommended_action": "Consulte a conversa original enquanto a memória é reconstruída.",
+        "avg_response_seconds": None, "max_response_seconds": None,
+        "inactive_minutes": None, "next_review_at": None,
+        "raw_analysis": {"coverage": {"complete": False, "text_history_complete": False,
+                                     "reconciliation_pending": True}},
+        "updated_at": now,
+    }
+    response = await client.patch(
+        f"{SUPABASE_URL}/rest/v1/conversation_ai_memory",
+        params={"org_id": f"eq.{conversation.get('org_id') or ORG_ID}",
+                "conversation_id": f"eq.{conversation['id']}"},
+        headers=_headers(), json=cleared)
+    response.raise_for_status()
+    if not response.json():
+        raise ValueError("Memory invalidation did not update a row")
+    await _consolidate_customer(client, conversation)
+    return {**previous, **cleared}
+
+
 async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -> bool:
     conversation_id = conversation["id"]
     prev_res = await client.get(
@@ -657,6 +686,21 @@ async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -
 
     prev_res.raise_for_status()
     checkpoint = checkpoint_of(previous)
+    history_digest = EMPTY_DIGEST
+    expected = checkpoint.get("retained_ids_digest") if checkpoint else None
+    if checkpoint and expected:
+        history_digest = await retained_prefix_digest(
+            client, SUPABASE_URL, _headers(), conversation.get('org_id') or ORG_ID,
+            conversation_id, checkpoint)
+    old_raw = previous.get("raw_analysis") or {}
+    old_coverage = (old_raw.get("coverage") or {}) if isinstance(old_raw, dict) else {}
+    pending_rebuild = isinstance(old_coverage, dict) and old_coverage.get("reconciliation_pending")
+    # Legacy summaries cannot certify which messages they covered. Clear them once.
+    if previous and (not expected or history_digest != expected):
+        if not pending_rebuild:
+            previous = await _invalidate_changed_history(client, conversation, previous)
+        checkpoint = None
+        history_digest = EMPTY_DIGEST
     params = {
         "org_id": f"eq.{conversation.get('org_id') or ORG_ID}",
         "conversation_id": f"eq.{conversation_id}",
@@ -725,6 +769,8 @@ async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -
     text_truncated = any(len((row.get("content") or "").strip()) > 4000
                          or len(transcripts.get(row["id"], "")) + 19 > 4000 for row in new_messages)
     coverage = analysis["coverage"]
+    coverage["retained_ids_digest"] = extend_digest(history_digest, new_messages)
+    coverage["reconciliation_method"] = "retained_ids_and_dates_v1"
     coverage["context_truncated"] = previous_truncation or text_truncated or analysis.get("context_truncated", False)
     coverage["text_history_complete"] = not has_more and not coverage["context_truncated"]
     coverage["complete"] = coverage["text_history_complete"] and not analysis["media_gaps"]
