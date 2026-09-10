@@ -30,7 +30,10 @@ from sqlalchemy import func
 
 from app.config import get_settings
 from app.models.database import SessionLocal, UsageLog
-from app.services.usage_tracker import registrar_uso_anthropic
+from app.services.usage_tracker import (registrar_uso_anthropic, custo_anthropic_mes_atual,
+                                        TETO_MENSAL_ANTHROPIC_USD, LIMIAR_ECONOMIA_PCT)
+from app.services.memory_schedule import fair_memory_order
+from app.services.memory_reconciliation import EMPTY_DIGEST, extend_digest, retained_prefix_digest
 from app.services.memory_checkpoint import (MEMORY_FIELDS, checkpoint_of, cursor_filter, make_coverage, valid_analysis)
 
 settings = get_settings()
@@ -163,16 +166,25 @@ def _monthly_usage_brl() -> float:
         )
         return round(float(value or 0.0) * USD_BRL_SAFETY_RATE, 2)
     except Exception as exc:
-        # Em caso de falha no medidor, o ciclo continua limitado por quantidade
-        # e por delta; nunca volta ao comportamento de reler tudo.
+        # Sem medicao confiavel, suspender novas analises pagas.
         logger.error("[CRM MEMORY] Falha ao consultar custo mensal: %s", exc)
-        return 0.0
+        return float("inf")
     finally:
         if db:
             db.close()
 
 
 def _budget_available() -> bool:
+    try:
+        global_used = custo_anthropic_mes_atual(usar_cache=False, falhar_em_erro=True)
+    except Exception:
+        logger.error("[CRM MEMORY] Revisao pausada: medidor global indisponivel")
+        return False
+    # Preserve the existing global ceiling and reserve its last portion for live service.
+    reserve_threshold = TETO_MENSAL_ANTHROPIC_USD * max(0.0, min(LIMIAR_ECONOMIA_PCT, 1.0))
+    if global_used >= reserve_threshold:
+        logger.warning("[CRM MEMORY] Revisao pausada para preservar orcamento de atendimento")
+        return False
     used = _monthly_usage_brl()
     if used >= MONTHLY_BUDGET_BRL:
         logger.error(
@@ -634,6 +646,34 @@ async def _consolidate_customer(client: httpx.AsyncClient, conversation: dict) -
     response.raise_for_status()
 
 
+async def _invalidate_changed_history(client, conversation, previous):
+    """Clear derived assertions before rebuilding; source messages remain untouched."""
+    now = datetime.now(timezone.utc).isoformat()
+    cleared = {
+        "summary": "Histórico em reconstrução após conferência de mensagens.",
+        "memory": {}, "analysis_status": "unknown", "priority": "normal",
+        "subject": None, "customer_intent": None, "last_speaker": None,
+        "pending_question": False, "needs_agent_reply": False,
+        "needs_followup": False, "should_close": False,
+        "recommended_action": "Consulte a conversa original enquanto a memória é reconstruída.",
+        "avg_response_seconds": None, "max_response_seconds": None,
+        "inactive_minutes": None, "next_review_at": None,
+        "raw_analysis": {"coverage": {"complete": False, "text_history_complete": False,
+                                     "reconciliation_pending": True}},
+        "updated_at": now,
+    }
+    response = await client.patch(
+        f"{SUPABASE_URL}/rest/v1/conversation_ai_memory",
+        params={"org_id": f"eq.{conversation.get('org_id') or ORG_ID}",
+                "conversation_id": f"eq.{conversation['id']}"},
+        headers=_headers(), json=cleared)
+    response.raise_for_status()
+    if not response.json():
+        raise ValueError("Memory invalidation did not update a row")
+    await _consolidate_customer(client, conversation)
+    return {**previous, **cleared}
+
+
 async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -> bool:
     conversation_id = conversation["id"]
     prev_res = await client.get(
@@ -646,6 +686,21 @@ async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -
 
     prev_res.raise_for_status()
     checkpoint = checkpoint_of(previous)
+    history_digest = EMPTY_DIGEST
+    expected = checkpoint.get("retained_ids_digest") if checkpoint else None
+    if checkpoint and expected:
+        history_digest = await retained_prefix_digest(
+            client, SUPABASE_URL, _headers(), conversation.get('org_id') or ORG_ID,
+            conversation_id, checkpoint)
+    old_raw = previous.get("raw_analysis") or {}
+    old_coverage = (old_raw.get("coverage") or {}) if isinstance(old_raw, dict) else {}
+    pending_rebuild = isinstance(old_coverage, dict) and old_coverage.get("reconciliation_pending")
+    # Legacy summaries cannot certify which messages they covered. Clear them once.
+    if previous and (not expected or history_digest != expected):
+        if not pending_rebuild:
+            previous = await _invalidate_changed_history(client, conversation, previous)
+        checkpoint = None
+        history_digest = EMPTY_DIGEST
     params = {
         "org_id": f"eq.{conversation.get('org_id') or ORG_ID}",
         "conversation_id": f"eq.{conversation_id}",
@@ -714,6 +769,8 @@ async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -
     text_truncated = any(len((row.get("content") or "").strip()) > 4000
                          or len(transcripts.get(row["id"], "")) + 19 > 4000 for row in new_messages)
     coverage = analysis["coverage"]
+    coverage["retained_ids_digest"] = extend_digest(history_digest, new_messages)
+    coverage["reconciliation_method"] = "retained_ids_and_dates_v1"
     coverage["context_truncated"] = previous_truncation or text_truncated or analysis.get("context_truncated", False)
     coverage["text_history_complete"] = not has_more and not coverage["context_truncated"]
     coverage["complete"] = coverage["text_history_complete"] and not analysis["media_gaps"]
@@ -780,45 +837,59 @@ async def run_crm_memory_cycle() -> None:
     )
     analyzed = 0
     skipped = 0
-    # Read all statuses and dates. Stable pagination lets old backlog survive day changes.
+    failed = 0
+    deferred = 0
     async with httpx.AsyncClient(timeout=30.0) as client:
-        offset = 0
-        stop = False
-        while not stop:
-            conv_res = await client.get(
-                f"{SUPABASE_URL}/rest/v1/conversations",
-                params={"org_id": f"eq.{ORG_ID}",
-                        "select": "id,org_id,contact_id,agent_id,status,last_message_at,created_at,contacts(id,name,company,phone),profiles(id,name,department)",
-                        "order": "id.asc", "offset": offset, "limit": 500},
-                headers=_headers(),
-            )
-            conv_res.raise_for_status()
-            conversations = conv_res.json()
-            if not isinstance(conversations, list):
-                raise ValueError("Invalid conversations response")
-            if not conversations:
+        async def read_schedule_rows(table, select, key):
+            rows = []
+            after = None
+            while True:
+                params = {"org_id": f"eq.{ORG_ID}", "select": select,
+                          "order": f"{key}.asc", "limit": 500}
+                if after:
+                    params[key] = f"gt.{after}"
+                response = await client.get(
+                    f"{SUPABASE_URL}/rest/v1/{table}", params=params, headers=_headers())
+                response.raise_for_status()
+                page = response.json()
+                if not isinstance(page, list):
+                    raise ValueError("Invalid memory scheduling response")
+                if not page:
+                    return rows
+                next_key = page[-1][key]
+                if after is not None and next_key <= after:
+                    raise ValueError("Memory scheduling pagination did not advance")
+                rows.extend(page)
+                after = next_key
+
+        # Read scheduling metadata first; never silently schedule from a partial page.
+        conversations = await read_schedule_rows(
+            "conversations",
+            "id,org_id,contact_id,agent_id,status,last_message_at,created_at,contacts(id,name,company,phone),profiles(id,name,department)",
+            "id")
+        memories = await read_schedule_rows(
+            "conversation_ai_memory", "conversation_id,analyzed_at", "conversation_id")
+        day = datetime.now(BRASILIA_TZ).date().isoformat()
+        schedule = list(fair_memory_order(conversations, memories, day))
+        for index, conversation in enumerate(schedule):
+            if analyzed + failed >= MAX_ANALYSES_PER_CYCLE or not _budget_available():
+                deferred = len(schedule) - index
                 break
-            offset += len(conversations)
-            for conversation in conversations:
-                if analyzed >= MAX_ANALYSES_PER_CYCLE or not _budget_available():
-                    stop = True
-                    break
-                try:
-                    used_ai = await _process_conversation(client, conversation)
-                    if used_ai:
-                        analyzed += 1
-                    else:
-                        skipped += 1
-                except Exception:
-                    # Count failures against the cycle cap: the provider may already have billed a call.
+            try:
+                used_ai = await _process_conversation(client, conversation)
+                if used_ai:
                     analyzed += 1
-                    logger.exception("[CRM MEMORY] Falha; retomar checkpoint da conversa %s", conversation.get("id"))
+                else:
+                    skipped += 1
+            except Exception:
+                # A failed attempt may already have incurred a provider charge.
+                failed += 1
+                logger.exception("[CRM MEMORY] Falha; retomar checkpoint da conversa %s", conversation.get("id"))
 
     logger.info(
-        "[CRM MEMORY] Ciclo finalizado: %s analisadas com IA, %s ignoradas/atualizadas sem IA. Custo mensal: R$ %.2f.",
-        analyzed,
-        skipped,
-        _monthly_usage_brl(),
+        "[CRM MEMORY] Ciclo finalizado: %s usos de IA retornados, %s sem IA, "
+        "%s tentativas com falha, %s conversas adiadas pelo limite. Custo mensal: R$ %.2f.",
+        analyzed, skipped, failed, deferred, _monthly_usage_brl(),
     )
 
 

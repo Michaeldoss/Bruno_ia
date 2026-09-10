@@ -43,6 +43,7 @@ from app.services.serasa_client import (
 from app.core.media_catalog import find_media_for_message
 from app.services.campaigns import detectar_campanha, get_contexto_campanha, get_origem_campanha
 from app.services.usage_tracker import registrar_uso_anthropic, registrar_uso_whisper
+from app.services.company_knowledge import approved_knowledge_context
 
 # Uniplus: credencial corrigida e testada (02/08). Reativado por
 # confirmacao explicita do Michael -- so libera consulta de estoque
@@ -1451,6 +1452,8 @@ async def _process_message_with_assistant_impl(thread_id: str, user_message: str
         if memoria_ia:
             from app.services.memory_context import format_memory_context
             system_dinamico += format_memory_context(memoria_ia)
+
+        system_dinamico += await approved_knowledge_context(user_message)
 
         # ── Cache na parte estática ────────────────────────────────────────
         system_parts = [
