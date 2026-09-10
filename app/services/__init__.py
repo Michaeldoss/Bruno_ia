@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 _started = False
+_memory_thread = None
 
 BRASILIA_TZ = ZoneInfo("America/Sao_Paulo")
 HORA_REVISAO = 19  # pedido 24/08: 1x/dia, as 19h, nao mais a cada N horas
@@ -39,13 +40,19 @@ def _memory_worker() -> None:
 
 
 def _start_memory_worker_once() -> None:
-    global _started
+    global _started, _memory_thread
     if _started:
         return
     _started = True
     thread = threading.Thread(target=_memory_worker, name="crm-memory-worker", daemon=True)
+    _memory_thread = thread
     thread.start()
     logger.info("[CRM MEMORY] Worker diario inicializado (revisao as 19h).")
+
+
+def memory_worker_alive() -> bool:
+    """Process liveness only; does not certify a successful nightly analysis."""
+    return _memory_thread is not None and _memory_thread.is_alive()
 
 
 _start_memory_worker_once()
