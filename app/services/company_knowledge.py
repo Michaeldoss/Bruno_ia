@@ -7,7 +7,9 @@ import unicodedata
 
 import httpx
 
-from app.services.crm_inbox_client import SUPABASE_URL, SUPABASE_KEY, ORG_ID, _headers
+from app.services.crm_inbox_client import SUPABASE_URL, SUPABASE_KEY, _headers
+
+from app.services.memory_tenant import require_org
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +19,8 @@ def _terms(text):
     return set(re.findall(r"[a-z0-9]{3,}", normalized))
 
 
-async def approved_knowledge_context(question):
+async def approved_knowledge_context(question, *, org_id):
+    org_id = require_org(org_id)
     if not SUPABASE_KEY or SUPABASE_KEY == "stub":
         return ""
     try:
@@ -27,7 +30,7 @@ async def approved_knowledge_context(question):
                 response = await client.get(
                     f"{SUPABASE_URL}/rest/v1/bruno_knowledge",
                     headers=_headers(),
-                    params={"org_id": f"eq.{ORG_ID}", "is_active": "eq.true",
+                    params={"org_id": f"eq.{org_id}", "is_active": "eq.true",
                             "approval_status": "eq.approved",
                             "select": "id,title,category,content,product,tags,confidence",
                             "order": "confidence.desc,id.asc", "limit": 30},
