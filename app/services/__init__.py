@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import threading
-import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -23,13 +22,13 @@ def _segundos_ate_19h() -> float:
     return (alvo - agora).total_seconds()
 
 
-def _memory_worker() -> None:
+async def _memory_worker_loop() -> None:
     # Revisao diaria as 19h: novos lotes e historico pendente de qualquer data.
     # Conversas sem mensagens novas nao chamam a IA; limites sao checados no ciclo.
     while True:
         espera = _segundos_ate_19h()
         logger.info("[CRM MEMORY] Proxima revisao diaria em %.1fh (19h Brasilia).", espera / 3600)
-        time.sleep(espera)
+        await asyncio.sleep(espera)
         try:
             from app.services.crm_memory_service import run_crm_memory_cycle, ORG_ID
             from app.services.memory_tenant import require_org
@@ -38,14 +37,20 @@ def _memory_worker() -> None:
             organizations = list(dict.fromkeys(require_org(value.strip()) for value in configured.split(',') if value.strip()))
             for org_id in organizations:
                 try:
-                    asyncio.run(run_crm_memory_cycle(org_id=org_id))
+                    await run_crm_memory_cycle(org_id=org_id)
                 except Exception:
                     logger.exception("[CRM MEMORY] Falha na organizacao %s", org_id)
         except Exception as exc:
             logger.exception("[CRM MEMORY] Falha na revisao diaria: %s", exc)
         # dorme um pouco alem de imediato pra nao rodar 2x se o calculo
         # de "ate 19h" cair exatamente em cima do segundo certo
-        time.sleep(60)
+        await asyncio.sleep(60)
+
+
+def _memory_worker() -> None:
+    # The pooled async provider client must stay on one event loop across nights
+    # and organizations. Do not close its loop after each cycle.
+    asyncio.run(_memory_worker_loop())
 
 
 def _start_memory_worker_once() -> None:
