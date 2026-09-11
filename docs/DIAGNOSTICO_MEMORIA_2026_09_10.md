@@ -9,3 +9,5 @@ Motivos distinguem limite de tentativas, reserva para atendimento, teto da memó
 Corrige também o painel de custos, que somava serviços diferentes na rubrica Anthropic. Mantém os limites existentes. A causa da ausência de análises ainda não foi comprovada; diagnóstico deve ser consultado após implantação e após a janela das 19h Brasília.
 
 Verificação: compilação de sintaxe Python e revisão do diff. Sem suíte, chamadas pagas, envio a clientes ou modificação de dados de produção. Isolamento completo de canais/ERP/estado local entre empresas continua pendente.
+
+Análises inválidas anteriormente entravam na contagem de usos de IA como se fossem processadas, apesar de não salvarem checkpoint. Agora contam como falhas, com motivos separados para resposta truncada, formato inválido, ausência de provedor, histórico vazio e erro do provedor. O limite de tentativas continua incluindo falhas; nenhum teto ou token máximo foi aumentado.

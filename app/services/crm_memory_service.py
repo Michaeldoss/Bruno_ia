@@ -177,6 +177,10 @@ def _monthly_usage_brl() -> float:
             db.close()
 
 
+class MemoryAnalysisDeferred(RuntimeError):
+    """Expected analysis failure; checkpoint remains unchanged."""
+
+
 def memory_budget_status() -> dict:
     try:
         global_used = custo_anthropic_mes_atual(usar_cache=False, falhar_em_erro=True)
@@ -477,8 +481,10 @@ async def _analyze_incremental(
 
     history = _format_messages(prompt_messages, transcripts)
     analysis_valid = False
+    analysis_failure = None
     context_truncated = False
     if not _anthropic or not history:
+        analysis_failure = "provider_not_configured" if not _anthropic else "empty_history"
         result = fallback
         usage_data = {"input_tokens": 0, "output_tokens": 0, "model": MODEL, "used_ai": False}
     else:
@@ -534,8 +540,12 @@ MENSAGENS NOVAS E CONTEXTO IMEDIATO:
                 timeout=45.0,
             )
             registrar_uso_anthropic(MODEL, response.usage, agente="crm_memory")
-            parsed = _safe_json(response.content[0].text)
-            analysis_valid = valid_analysis(parsed) and getattr(response, "stop_reason", "end_turn") != "max_tokens"
+            response_text = "".join(getattr(block, "text", "") for block in response.content)
+            parsed = _safe_json(response_text)
+            truncated = getattr(response, "stop_reason", "end_turn") == "max_tokens"
+            analysis_valid = valid_analysis(parsed) and not truncated
+            if not analysis_valid:
+                analysis_failure = "response_truncated" if truncated else "invalid_analysis_format"
             result = parsed if analysis_valid else fallback
             usage_data = {
                 "input_tokens": int(getattr(response.usage, "input_tokens", 0) or 0),
@@ -547,6 +557,7 @@ MENSAGENS NOVAS E CONTEXTO IMEDIATO:
             }
         except Exception as exc:
             logger.error("[CRM MEMORY] IA falhou na conversa %s: %s", conversation.get("id"), exc)
+            analysis_failure = "provider_error"
             result = fallback
             usage_data = {"input_tokens": 0, "output_tokens": 0, "model": MODEL, "used_ai": False, "error": str(exc)[:300]}
 
@@ -558,6 +569,7 @@ MENSAGENS NOVAS E CONTEXTO IMEDIATO:
         "last_message_at": last_message_at,
         "usage": usage_data,
         "analysis_valid": analysis_valid,
+        "analysis_failure": analysis_failure,
         "context_truncated": context_truncated,
         "processing_mode": "initial" if not previous else "incremental",
         "messages_sent_to_ai": len(prompt_messages),
@@ -782,7 +794,7 @@ async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -
     )
     if not analysis.get("analysis_valid"):
         logger.warning("[CRM MEMORY] Analise incompleta; checkpoint preservado na conversa %s", conversation_id)
-        return bool(analysis.get("usage", {}).get("used_ai"))
+        raise MemoryAnalysisDeferred(analysis.get("analysis_failure") or "invalid_analysis_format")
     analysis["coverage"] = make_coverage(new_messages, has_more, conversation.get("last_message_at"), participants)
     old_raw = previous.get("raw_analysis") or {}
     old_gaps = old_raw.get("media_gaps", []) if checkpoint and isinstance(old_raw, dict) else []
@@ -881,6 +893,7 @@ async def _run_crm_memory_cycle(*, org_id: str) -> dict:
     failed = 0
     deferred = 0
     reason = "schedule_exhausted"
+    failure_reasons = {}
     async with httpx.AsyncClient(timeout=30.0) as client:
         async def read_schedule_rows(table, select, key):
             rows = []
@@ -929,7 +942,12 @@ async def _run_crm_memory_cycle(*, org_id: str) -> dict:
                     analyzed += 1
                 else:
                     skipped += 1
+            except MemoryAnalysisDeferred as exc:
+                failed += 1
+                failure_reasons[str(exc)] = failure_reasons.get(str(exc), 0) + 1
+                logger.warning("[CRM MEMORY] Analise adiada: %s", exc)
             except Exception:
+                failure_reasons["processing_error"] = failure_reasons.get("processing_error", 0) + 1
                 # A failed attempt may already have incurred a provider charge.
                 failed += 1
                 logger.exception("[CRM MEMORY] Falha; retomar checkpoint da conversa %s", conversation.get("id"))
@@ -942,7 +960,8 @@ async def _run_crm_memory_cycle(*, org_id: str) -> dict:
 
     return {"status": "partial" if deferred or failed else "completed",
             "reason": reason, "analyzed": analyzed, "without_ai": skipped,
-            "failed": failed, "deferred": deferred, "scheduled": len(schedule)}
+            "failed": failed, "deferred": deferred, "scheduled": len(schedule),
+            "failure_reasons": failure_reasons}
 
 
 async def _loop() -> None:
