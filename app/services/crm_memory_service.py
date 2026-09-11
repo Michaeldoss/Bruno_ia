@@ -18,6 +18,7 @@ import base64
 import binascii
 import json
 import logging
+import math
 import os
 import re
 from datetime import datetime, timezone
@@ -176,26 +177,34 @@ def _monthly_usage_brl() -> float:
             db.close()
 
 
-def _budget_available() -> bool:
+class MemoryAnalysisDeferred(RuntimeError):
+    """Expected analysis failure; checkpoint remains unchanged."""
+
+
+def memory_budget_status() -> dict:
     try:
         global_used = custo_anthropic_mes_atual(usar_cache=False, falhar_em_erro=True)
     except Exception:
         logger.error("[CRM MEMORY] Revisao pausada: medidor global indisponivel")
-        return False
+        return {"allowed": False, "reason": "global_meter_unavailable"}
     # Preserve the existing global ceiling and reserve its last portion for live service.
     reserve_threshold = TETO_MENSAL_ANTHROPIC_USD * max(0.0, min(LIMIAR_ECONOMIA_PCT, 1.0))
+    if not math.isfinite(global_used):
+        return {"allowed": False, "reason": "global_meter_unavailable"}
     if global_used >= reserve_threshold:
         logger.warning("[CRM MEMORY] Revisao pausada para preservar orcamento de atendimento")
-        return False
+        return {"allowed": False, "reason": "live_service_reserve"}
     used = _monthly_usage_brl()
+    if not math.isfinite(used):
+        return {"allowed": False, "reason": "memory_meter_unavailable"}
     if used >= MONTHLY_BUDGET_BRL:
         logger.error(
             "[CRM MEMORY] Teto mensal atingido: R$ %.2f de R$ %.2f. IA pausada.",
             used,
             MONTHLY_BUDGET_BRL,
         )
-        return False
-    return True
+        return {"allowed": False, "reason": "memory_monthly_limit"}
+    return {"allowed": True, "reason": "available"}
 
 
 def _response_metrics(messages: List[dict]) -> Tuple[Optional[int], Optional[int]]:
@@ -472,8 +481,10 @@ async def _analyze_incremental(
 
     history = _format_messages(prompt_messages, transcripts)
     analysis_valid = False
+    analysis_failure = None
     context_truncated = False
     if not _anthropic or not history:
+        analysis_failure = "provider_not_configured" if not _anthropic else "empty_history"
         result = fallback
         usage_data = {"input_tokens": 0, "output_tokens": 0, "model": MODEL, "used_ai": False}
     else:
@@ -529,8 +540,12 @@ MENSAGENS NOVAS E CONTEXTO IMEDIATO:
                 timeout=45.0,
             )
             registrar_uso_anthropic(MODEL, response.usage, agente="crm_memory")
-            parsed = _safe_json(response.content[0].text)
-            analysis_valid = valid_analysis(parsed) and getattr(response, "stop_reason", "end_turn") != "max_tokens"
+            response_text = "".join(getattr(block, "text", "") for block in response.content)
+            parsed = _safe_json(response_text)
+            truncated = getattr(response, "stop_reason", "end_turn") == "max_tokens"
+            analysis_valid = valid_analysis(parsed) and not truncated
+            if not analysis_valid:
+                analysis_failure = "response_truncated" if truncated else "invalid_analysis_format"
             result = parsed if analysis_valid else fallback
             usage_data = {
                 "input_tokens": int(getattr(response.usage, "input_tokens", 0) or 0),
@@ -542,6 +557,7 @@ MENSAGENS NOVAS E CONTEXTO IMEDIATO:
             }
         except Exception as exc:
             logger.error("[CRM MEMORY] IA falhou na conversa %s: %s", conversation.get("id"), exc)
+            analysis_failure = "provider_error"
             result = fallback
             usage_data = {"input_tokens": 0, "output_tokens": 0, "model": MODEL, "used_ai": False, "error": str(exc)[:300]}
 
@@ -553,6 +569,7 @@ MENSAGENS NOVAS E CONTEXTO IMEDIATO:
         "last_message_at": last_message_at,
         "usage": usage_data,
         "analysis_valid": analysis_valid,
+        "analysis_failure": analysis_failure,
         "context_truncated": context_truncated,
         "processing_mode": "initial" if not previous else "incremental",
         "messages_sent_to_ai": len(prompt_messages),
@@ -777,7 +794,7 @@ async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -
     )
     if not analysis.get("analysis_valid"):
         logger.warning("[CRM MEMORY] Analise incompleta; checkpoint preservado na conversa %s", conversation_id)
-        return bool(analysis.get("usage", {}).get("used_ai"))
+        raise MemoryAnalysisDeferred(analysis.get("analysis_failure") or "invalid_analysis_format")
     analysis["coverage"] = make_coverage(new_messages, has_more, conversation.get("last_message_at"), participants)
     old_raw = previous.get("raw_analysis") or {}
     old_gaps = old_raw.get("media_gaps", []) if checkpoint and isinstance(old_raw, dict) else []
@@ -847,11 +864,24 @@ async def _process_conversation(client: httpx.AsyncClient, conversation: dict) -
     return bool(analysis.get("usage", {}).get("used_ai"))
 
 
-async def run_crm_memory_cycle(*, org_id: str) -> None:
+async def run_crm_memory_cycle(*, org_id: str) -> dict:
+    from app.services.memory_diagnostics import begin_cycle, finish_cycle
+    org_id = require_org(org_id)
+    begin_cycle(org_id)
+    try:
+        result = await _run_crm_memory_cycle(org_id=org_id)
+    except Exception:
+        finish_cycle(org_id, {"status": "failed", "reason": "cycle_exception"})
+        raise
+    finish_cycle(org_id, result)
+    return result
+
+
+async def _run_crm_memory_cycle(*, org_id: str) -> dict:
     org_id = require_org(org_id)
     if not SUPABASE_KEY or SUPABASE_KEY == "stub":
         logger.warning("[CRM MEMORY] Supabase nao configurado.")
-        return
+        return {"status": "blocked", "reason": "supabase_not_configured"}
 
     logger.info(
         "[CRM MEMORY] Revisao diaria iniciada (historico paginado, todos os status). Custo mensal estimado: R$ %.2f / R$ %.2f",
@@ -862,6 +892,8 @@ async def run_crm_memory_cycle(*, org_id: str) -> None:
     skipped = 0
     failed = 0
     deferred = 0
+    reason = "schedule_exhausted"
+    failure_reasons = {}
     async with httpx.AsyncClient(timeout=30.0) as client:
         async def read_schedule_rows(table, select, key):
             rows = []
@@ -895,7 +927,13 @@ async def run_crm_memory_cycle(*, org_id: str) -> None:
         day = datetime.now(BRASILIA_TZ).date().isoformat()
         schedule = list(fair_memory_order(conversations, memories, day))
         for index, conversation in enumerate(schedule):
-            if analyzed + failed >= MAX_ANALYSES_PER_CYCLE or not _budget_available():
+            if analyzed + failed >= MAX_ANALYSES_PER_CYCLE:
+                reason = "cycle_limit"
+                deferred = len(schedule) - index
+                break
+            budget = memory_budget_status()
+            if not budget["allowed"]:
+                reason = budget["reason"]
                 deferred = len(schedule) - index
                 break
             try:
@@ -904,7 +942,12 @@ async def run_crm_memory_cycle(*, org_id: str) -> None:
                     analyzed += 1
                 else:
                     skipped += 1
+            except MemoryAnalysisDeferred as exc:
+                failed += 1
+                failure_reasons[str(exc)] = failure_reasons.get(str(exc), 0) + 1
+                logger.warning("[CRM MEMORY] Analise adiada: %s", exc)
             except Exception:
+                failure_reasons["processing_error"] = failure_reasons.get("processing_error", 0) + 1
                 # A failed attempt may already have incurred a provider charge.
                 failed += 1
                 logger.exception("[CRM MEMORY] Falha; retomar checkpoint da conversa %s", conversation.get("id"))
@@ -914,6 +957,11 @@ async def run_crm_memory_cycle(*, org_id: str) -> None:
         "%s tentativas com falha, %s conversas adiadas pelo limite. Custo mensal: R$ %.2f.",
         analyzed, skipped, failed, deferred, _monthly_usage_brl(),
     )
+
+    return {"status": "partial" if deferred or failed else "completed",
+            "reason": reason, "analyzed": analyzed, "without_ai": skipped,
+            "failed": failed, "deferred": deferred, "scheduled": len(schedule),
+            "failure_reasons": failure_reasons}
 
 
 async def _loop() -> None:
