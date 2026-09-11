@@ -10,6 +10,7 @@ import httpx
 from app.services.crm_inbox_client import SUPABASE_URL, SUPABASE_KEY, _headers
 
 from app.services.memory_tenant import require_org
+from app.services.knowledge_evidence import evidence_is_current
 
 logger = logging.getLogger(__name__)
 
@@ -32,29 +33,33 @@ async def approved_knowledge_context(question, *, org_id):
                     headers=_headers(),
                     params={"org_id": f"eq.{org_id}", "is_active": "eq.true",
                             "approval_status": "eq.approved",
-                            "select": "id,title,category,content,product,tags,confidence",
+                            "select": "id,org_id,title,category,content,product,tags,confidence,source_type,source_reference",
                             "order": "confidence.desc,id.asc", "limit": 30},
                 )
                 response.raise_for_status()
                 records = response.json()
-        if not isinstance(records, list):
-            raise ValueError("Invalid knowledge response")
-        terms = _terms(question)
-        ranked = sorted(records, key=lambda row: len(terms & _terms(
-            " ".join(str(row.get(field) or "") for field in ("title", "product", "category", "tags", "content"))
-        )), reverse=True)
-        selected, budget = [], 6000
-        for row in ranked:
-            if not isinstance(row, dict):
-                continue
-            item = {key: row.get(key) for key in ("id", "title", "category", "product", "content")}
-            encoded = json.dumps(item, ensure_ascii=False)
-            if len(encoded) > budget:
-                continue
-            selected.append(item)
-            budget -= len(encoded)
-            if len(selected) >= 6:
-                break
+                if not isinstance(records, list) or any(not isinstance(row, dict) for row in records):
+                    raise ValueError("Invalid knowledge response")
+                terms = _terms(question)
+                ranked = sorted(records, key=lambda row: len(terms & _terms(
+                    " ".join(str(row.get(field) or "") for field in ("title", "product", "category", "tags", "content"))
+                )), reverse=True)
+                candidates, budget = [], 6000
+                for row in ranked:
+                    item = {key: row.get(key) for key in ("id", "title", "category", "product", "content")}
+                    encoded = json.dumps(item, ensure_ascii=False)
+                    if len(encoded) > budget:
+                        continue
+                    candidates.append((row, item))
+                    budget -= len(encoded)
+                    if len(candidates) >= 6:
+                        break
+                # All source checks share the original four-second lookup deadline.
+                # Errors/timeouts suppress the context; unverified evidence is never used.
+                checks = await asyncio.gather(*(evidence_is_current(
+                    client, SUPABASE_URL, _headers(), row, org_id=org_id
+                ) for row, _ in candidates))
+                selected = [item for (_, item), current in zip(candidates, checks) if current]
         if not selected:
             return ""
         return (
