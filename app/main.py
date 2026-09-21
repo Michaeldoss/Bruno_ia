@@ -55,9 +55,22 @@ def memory_diagnostics(request: Request):
     if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
         return JSONResponse(status_code=401, content={"error": "Nao autorizado"})
     from app.services.memory_diagnostics import cycle_snapshot
-    from app.services.crm_memory_service import memory_budget_status, ORG_ID
     from app.services.memory_tenant import require_org
     from app.services import _segundos_ate_19h
+    # Diagnose a failed memory module import without exposing environment values.
+    # This is also the module imported by the nightly worker.
+    try:
+        from app.services.crm_memory_service import memory_budget_status, ORG_ID
+    except Exception as exc:
+        import traceback
+        frames = traceback.extract_tb(exc.__traceback__)
+        frame = frames[-1] if frames else None
+        return JSONResponse(status_code=503, headers={"Cache-Control": "no-store"}, content={
+            "error": "memory_initialization_failed",
+            "error_type": type(exc).__name__,
+            "location": {"file": os.path.basename(frame.filename), "line": frame.lineno,
+                         "function": frame.name} if frame else None,
+        })
     try:
         organizations = list(dict.fromkeys(require_org(value.strip()) for value in
             os.getenv("CRM_MEMORY_ORG_IDS", ORG_ID).split(',') if value.strip()))
