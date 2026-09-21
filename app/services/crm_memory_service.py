@@ -424,7 +424,7 @@ def _normalize_result(
 def _format_messages(messages: List[dict], transcripts: Dict[str, str]) -> str:
     lines: List[str] = []
     for msg in messages:
-        role = "CLIENTE" if msg.get("is_from_contact") else f"AGENTE {msg.get("sender_id") or "nao identificado"}"
+        role = "CLIENTE" if msg.get("is_from_contact") else f"AGENTE {msg.get('sender_id') or 'nao identificado'}"
         content = (msg.get("content") or "").strip()
         if msg.get("id") in transcripts:
             content = f"[AUDIO TRANSCRITO] {transcripts[msg['id']]}"
