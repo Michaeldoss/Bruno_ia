@@ -66,6 +66,78 @@ def _normalize_phone(raw: str) -> str:
     return re.sub(r"[^\d]", "", raw.replace("whatsapp:", ""))
 
 
+async def recent_external_inbound_exists(phone: str, content: str, window_seconds: int = 120) -> bool:
+    """Detecta se a mesma mensagem acabou de entrar no CRM por um canal
+    humano/Evolution.
+
+    O n8n historicamente encaminhou alguns eventos de Evolution para o
+    webhook do Bruno sem o campo To. Sem correlação de origem, o Bruno
+    espelhava a mesma mensagem de novo em uma conversa bruno-ia.
+    Esse teste é conservador: só bloqueia quando telefone + conteúdo
+    coincidem em uma conversa NÃO-Bruno dentro de uma janela curta.
+    """
+    if not SUPABASE_KEY or SUPABASE_KEY == "stub":
+        return False
+
+    phone_clean = _normalize_phone(phone)
+    body = (content or "").strip()
+    if not phone_clean or not body:
+        return False
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=max(30, window_seconds))).isoformat()
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            conv_response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/conversations",
+                params={
+                    "org_id": f"eq.{ORG_ID}",
+                    "whatsapp_phone": f"eq.{phone_clean}",
+                    "whatsapp_instance": f"neq.{WHATSAPP_INSTANCE}",
+                    "status": "in.(open,pending)",
+                    "select": "id",
+                    "limit": 50,
+                },
+                headers=_headers(),
+            )
+            if conv_response.status_code != 200:
+                return False
+
+            conversation_ids = [
+                row.get("id")
+                for row in (conv_response.json() or [])
+                if isinstance(row, dict) and row.get("id")
+            ]
+            if not conversation_ids:
+                return False
+
+            ids_filter = "in.(" + ",".join(conversation_ids) + ")"
+            msg_response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/messages",
+                params={
+                    "conversation_id": ids_filter,
+                    "is_from_contact": "eq.true",
+                    "created_at": f"gte.{cutoff}",
+                    "select": "id,content,created_at,whatsapp_id",
+                    "order": "created_at.desc",
+                    "limit": 50,
+                },
+                headers=_headers(),
+            )
+            if msg_response.status_code != 200:
+                return False
+
+            normalized_body = " ".join(body.split())
+            for row in msg_response.json() or []:
+                recent_content = " ".join(str(row.get("content") or "").strip().split())
+                if recent_content == normalized_body:
+                    return True
+    except Exception as exc:
+        logger.warning("[CRM Inbox] Falha ao correlacionar origem externa: %s", type(exc).__name__)
+
+    return False
+
+
 async def _get_or_create_contact(client: httpx.AsyncClient, phone: str, nome: Optional[str]) -> Optional[str]:
     r = await client.get(
         f"{SUPABASE_URL}/rest/v1/contacts",
