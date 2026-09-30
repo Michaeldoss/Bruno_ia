@@ -1440,3 +1440,11 @@ def monitor():
 
 
 app.include_router(webhook_router, prefix="/webhooks", tags=["Webhooks"])
+
+# Compatibilidade operacional:
+# o n8n historicamente chama /twils na raiz. O webhook real passou a
+# ficar sob /webhooks/twils quando este router ganhou prefixo.
+# Mantemos o endpoint legado apontando para o mesmo handler para não
+# interromper mensagens enquanto o fluxo do n8n é atualizado.
+from app.api.webhooks import twilio_webhook
+app.add_api_route("/twils", twilio_webhook, methods=["POST"], name="twilio_webhook_legacy")
