@@ -242,6 +242,19 @@ async def twilio_webhook(
     # bate tambem no RECEBER.
     numero_bruno = re.sub(r"[^\d+]", "", f"+{settings.TWILIO_PHONE_NUMBER}".replace("++", "+"))
     numero_destino = re.sub(r"[^\d+]", "", (To or "").replace("whatsapp:", ""))
+
+    # O endpoint legado /twils recebe chamadas do n8n. Eventos de outras
+    # instancias estavam chegando sem o campo To e sendo tratados como se
+    # fossem mensagens do Bruno. Sem destino nao existe prova de que a
+    # mensagem pertence ao numero do Bruno, portanto o n8n nao pode
+    # alimentar este atendimento.
+    user_agent = (request.headers.get("user-agent") or "").lower()
+    if "n8n" in user_agent and not numero_destino:
+        logger.warning(
+            "[WEBHOOK] Evento n8n sem To ignorado: origem nao correlacionada ao numero do Bruno."
+        )
+        return Response(content=str(MessagingResponse()), media_type="application/xml")
+
     # Falha aberta: se numero_bruno nao tiver pelo menos alguns digitos
     # de verdade (env var vazia/mal configurada), nao bloqueia nada --
     # mesmo principio do human_active_recently, pra uma configuracao
