@@ -8,7 +8,7 @@ from app.services.buffer_service import message_buffer
 from app.core.media_catalog import MEDIA_CATALOG
 from app.services.followup_service import resetar_followup
 from app.services.satisfacao_service import verificar_resposta_satisfacao, _tick as _tick_satisfacao
-from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently, vendedor_humano_do_contato, criar_lead_no_pipeline_com_retry as criar_lead_no_pipeline
+from app.services.crm_inbox_client import log_message as log_message_to_crm, human_active_recently, vendedor_humano_do_contato, recent_external_inbound_exists, criar_lead_no_pipeline_com_retry as criar_lead_no_pipeline
 from app.models.database import SessionLocal, Lead, MediaSent, Conversation, LeadState
 from sqlalchemy import text
 from app.config import get_settings
@@ -266,6 +266,25 @@ async def twilio_webhook(
     # quebrar.
     if phone and not phone.startswith("+"):
         phone = "+" + re.sub(r"[^\d]", "", phone)
+
+    # Quando o encaminhamento passa pelo n8n, algumas chamadas antigas
+    # chegam sem o campo To. Nessa situação não assumimos automaticamente
+    # que a mensagem pertence ao Bruno: primeiro correlacionamos com o CRM.
+    # Se telefone + texto acabaram de entrar por uma instância Evolution
+    # de outro atendente, esta chamada é apenas uma cópia indevida.
+    if not numero_destino and Body:
+        try:
+            if await recent_external_inbound_exists(phone, Body, window_seconds=120):
+                logger.warning(
+                    "[WEBHOOK] Cópia de canal externo ignorada para %s: mensagem já registrada no CRM.",
+                    phone,
+                )
+                return Response(content=str(MessagingResponse()), media_type="application/xml")
+        except Exception as exc:
+            # Falha aberta: um problema temporário de correlação nunca deve
+            # interromper uma mensagem legítima do Bruno.
+            logger.warning("[WEBHOOK] Correlação de canal falhou: %s", type(exc).__name__)
+
     logger.info("[WEBHOOK] Recebido de %s | SID: %s", From, MessageSid)
 
     form = await request.form()
