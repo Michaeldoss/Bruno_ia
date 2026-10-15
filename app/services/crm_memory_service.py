@@ -307,7 +307,7 @@ async def _transcribe_new_audio(
             row = rows[0]
             if row.get("transcription"):
                 transcripts[msg_id] = row["transcription"]
-            if row.get("status") in {"completed", "processing", "invalid_media", "unsupported"}:
+            if str(row.get("status") or "").startswith("rt_") or row.get("status") in {"completed", "processing", "invalid_media", "unsupported"}:
                 continue
 
         await client.post(

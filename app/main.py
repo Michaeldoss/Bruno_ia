@@ -8,6 +8,7 @@ from app.services.satisfacao_service import start_satisfacao_service
 from app.services.finance_service import start_cobranca_service
 from app.services.crm_inbox_client import start_crm_sync_worker
 from app.services import memory_worker_alive
+from app.services.realtime_audio import start_audio_worker, stop_audio_worker, audio_worker_status
 from app.models.database import SessionLocal, Conversation, Lead, LeadState, UsageLog
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -24,7 +25,11 @@ async def lifespan(app: FastAPI):
     start_satisfacao_service()
     start_cobranca_service()
     start_crm_sync_worker()
-    yield
+    start_audio_worker()
+    try:
+        yield
+    finally:
+        await stop_audio_worker()
 
 
 app = FastAPI(
@@ -44,6 +49,7 @@ def health_check():
         "environment": settings.ENVIRONMENT,
         "release": os.getenv("RENDER_GIT_COMMIT", "unknown")[:40],
         "memory_worker_alive": memory_worker_alive(),
+        "audio_worker": audio_worker_status(),
     }
 
 
