@@ -35,15 +35,28 @@ async def _loop():
         _state["state"] = "configuration_required"
         return
     async with httpx.AsyncClient() as client:
-        try:
-            probe = await client.post(ENDPOINT, headers={"Authorization": f"Bearer {secret}"},
-                                      json={"probe": True}, timeout=100, follow_redirects=False)
-            probe.raise_for_status()
-            _state["model_verified"] = probe.json().get("state") == "ready"
-        except Exception as error:
-            _state["model_verified"] = False
-            logger.warning("CRM agent startup check failed (%s)", type(error).__name__)
+        while not await verify_model(client, secret):
+            await asyncio.sleep(30)
         await asyncio.gather(*(_consume(client, secret) for _ in range(3)))
+
+
+async def verify_model(client, secret):
+    try:
+        probe = await client.post(ENDPOINT, headers={"Authorization": f"Bearer {secret}"},
+                                  json={"probe": True}, timeout=100, follow_redirects=False)
+        probe.raise_for_status()
+        _state["model_verified"] = probe.json().get("state") == "ready"
+        return _state["model_verified"]
+    except httpx.HTTPStatusError as error:
+        body = error.response.json() if error.response.headers.get("content-type", "").startswith("application/json") else {}
+        code = body.get("code") or body.get("state") or "unknown"
+        safe_code = code if isinstance(code, str) and len(code) <= 90 and code.replace("_", "").isalnum() else "unknown"
+        _state.update(state="unavailable", model_verified=False, verification_code=safe_code)
+        logger.warning("CRM agent startup check failed (http=%s code=%s)", error.response.status_code, safe_code)
+    except Exception as error:
+        _state.update(state="unavailable", model_verified=False)
+        logger.warning("CRM agent startup check failed (%s)", type(error).__name__)
+    return False
 
 
 async def _consume(client, secret):
