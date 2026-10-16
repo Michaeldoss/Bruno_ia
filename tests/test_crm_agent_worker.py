@@ -49,6 +49,14 @@ class AgentWorkerTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await worker._consume(None, "test-secret")
 
+    async def test_failed_probe_stays_unverified_without_processing_jobs(self):
+        async def handler(request):
+            return httpx.Response(503,json={"state":"agent_unavailable","code":"model_429_insufficient_quota"})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            self.assertFalse(await worker.verify_model(client,"test-secret"))
+        self.assertFalse(worker.agent_worker_status()["model_verified"])
+        self.assertEqual(worker.agent_worker_status()["verification_code"],"model_429_insufficient_quota")
+
 
 if __name__ == "__main__":
     unittest.main()
