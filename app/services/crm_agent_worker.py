@@ -35,6 +35,14 @@ async def _loop():
         _state["state"] = "configuration_required"
         return
     async with httpx.AsyncClient() as client:
+        try:
+            probe = await client.post(ENDPOINT, headers={"Authorization": f"Bearer {secret}"},
+                                      json={"probe": True}, timeout=100, follow_redirects=False)
+            probe.raise_for_status()
+            _state["model_verified"] = probe.json().get("state") == "ready"
+        except Exception as error:
+            _state["model_verified"] = False
+            logger.warning("CRM agent startup check failed (%s)", type(error).__name__)
         await asyncio.gather(*(_consume(client, secret) for _ in range(3)))
 
 
