@@ -20,7 +20,7 @@ import httpx
 logger = logging.getLogger(__name__)
 MAX_BYTES = 24 * 1024 * 1024
 STUDY_MODEL = "gpt-5-mini"
-WORKER_VERSION = "openai-v3"
+WORKER_VERSION = "openai-v4"
 _task = None
 _state = {"state": "stopped", "batches": 0, "sources": 0}
 
