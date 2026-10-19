@@ -20,7 +20,7 @@ import httpx
 logger = logging.getLogger(__name__)
 MAX_BYTES = 24 * 1024 * 1024
 STUDY_MODEL = "gpt-5-mini"
-WORKER_VERSION = "openai-v2"
+WORKER_VERSION = "openai-v3"
 _task = None
 _state = {"state": "stopped", "batches": 0, "sources": 0}
 
@@ -66,25 +66,33 @@ def validate_analysis(value, sources):
     if not isinstance(value, dict) or not isinstance(value.get("summary"), str) or not value["summary"].strip():
         raise StudyBlocked("invalid_study_analysis")
     by_id = {s["message_id"]: s for s in sources}
+    rejected=[]
     for key, maximum in (("facts", 12), ("style_examples", 5)):
         entries = value.get(key)
         if not isinstance(entries, list) or len(entries) > maximum:
             raise StudyBlocked("invalid_study_evidence")
+        accepted=[]
         for item in entries:
             if not isinstance(item, dict):
                 raise StudyBlocked("invalid_study_evidence")
             source = by_id.get(item.get("source_id"))
             quote = item.get("quote")
             if not source or not isinstance(quote, str) or not quote.strip() or quote not in source["text"]:
-                raise StudyBlocked("unsupported_study_evidence")
+                rejected.append(key+":unsupported_study_evidence");continue
             if key == "style_examples" and (source["authorship"] != "owner_device" or source.get("kind") not in {"text","audio"} or source["status"] != "read"):
-                raise StudyBlocked("unverified_style_author")
+                rejected.append(key+":unverified_style_author");continue
             label = "statement" if key == "facts" else "observation"
             if not isinstance(item.get(label), str) or not item[label].strip():
-                raise StudyBlocked("invalid_study_evidence")
+                rejected.append(key+":empty_evidence_statement");continue
+            accepted.append(item)
+        value[key]=accepted
     if not isinstance(value.get("uncertainties"), list) or any(not isinstance(x, str) for x in value["uncertainties"]):
         raise StudyBlocked("invalid_study_uncertainties")
     value["status"] = "research_candidate"
+    value["summary_status"] = "unverified_synthesis"
+    value["rejected_evidence_count"] = len(rejected)
+    value["rejected_evidence_reasons"] = rejected
+    if rejected:value["uncertainties"].append("Interpretações sem citação literal/autoria válida foram descartadas; consultar as fontes preservadas.")
     value["coverage"] = {"sources": len(sources), "unread_or_partial": [s["message_id"] for s in sources if s["status"] != "read"]}
     return value
 
