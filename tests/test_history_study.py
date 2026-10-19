@@ -32,11 +32,13 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):await self.client.aclose()
 
     def test_evidence_requires_literal_source_and_verified_author(self):
-        source={'message_id':'message','text':MESSAGE['content'],'authorship':'owner_device','status':'read'}
+        source={'message_id':'message','text':MESSAGE['content'],'authorship':'owner_device','status':'read','kind':'text'}
         analysis={**copy.deepcopy(ANALYSIS),'style_examples':[{'source_id':'message','quote':'Vou conferir','observation':'Resposta curta de acompanhamento.'}]}
         self.assertEqual(validate_analysis(analysis,[source])['status'],'research_candidate')
         for bad in ['automation','owner_candidate','unknown','contact','other_staff']:
             with self.assertRaises(StudyBlocked):validate_analysis(copy.deepcopy(analysis),[{**source,'authorship':bad}])
+        for kind,status in [('image','read'),('video','partial'),('text','blocked'),('document','read')]:
+            with self.assertRaises(StudyBlocked):validate_analysis(copy.deepcopy(analysis),[{**source,'kind':kind,'status':status}])
         analysis['style_examples'][0]['quote']='Já foi enviado'
         with self.assertRaises(StudyBlocked):validate_analysis(analysis,[source])
 
