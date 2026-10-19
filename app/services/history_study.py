@@ -128,7 +128,7 @@ class HistoryStudy:
     async def rpc(self, operation, data=None):
         response = await self.client.post(self.base + "/rest/v1/rpc/crm_history_study_work", headers=self.headers,
             json={"p_operation": operation, "p_job": self.job["id"] if self.job else None,
-                  "p_lease": self.job["lease"] if self.job else None, "p_data": data or {}}, timeout=30, follow_redirects=False)
+                  "p_lease": self.job["lease"] if self.job else None, "p_data": {**(data or {}),"worker_version":"openai-v1"}}, timeout=30, follow_redirects=False)
         response.raise_for_status()
         return response.json()
 
