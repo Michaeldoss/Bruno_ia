@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import httpx
 
-from app.services.history_study import HistoryStudy, StudyBlocked, authorship, kind_of, validate_analysis
+from app.services.history_study import HistoryStudy, StudyBlocked, STUDY_PROMPT, authorship, kind_of, validate_analysis
 
 SETTINGS=SimpleNamespace(SUPABASE_URL='https://db.example',SUPABASE_SERVICE_ROLE_KEY='test-db-key',ANTHROPIC_API_KEY='test-ai-key',OPENAI_API_KEY='test-audio-key')
 JOB={'id':'job','study_id':'study','org_id':'org','owner_id':'owner','conversation_id':'conv','lease':'lease','snapshot_at':'2026-10-19T10:00:00Z'}
@@ -73,16 +73,18 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
     async def test_each_rpc_carries_current_worker_version(self):
         await self.worker.rpc('heartbeat')
         body=json.loads(self.requests[-1].content)
-        self.assertEqual(body['p_data']['worker_version'],'openai-v1')
+        self.assertEqual(body['p_data']['worker_version'],'openai-v2')
         await self.worker.rpc('source',{'worker_version':'retired','message_id':'message'})
         body=json.loads(self.requests[-1].content)
-        self.assertEqual(body['p_data']['worker_version'],'openai-v1')
+        self.assertEqual(body['p_data']['worker_version'],'openai-v2')
 
     async def test_openai_responses_maps_media_and_records_before_accepting(self):
         def handler(request):
             if request.url.host=='api.openai.com':
                 body=json.loads(request.content)
                 self.assertFalse(body['store'])
+                self.assertTrue(body['text']['format']['strict'])
+                self.assertFalse(body['text']['format']['schema']['additionalProperties'])
                 self.assertEqual([x['type'] for x in body['input'][1]['content']],['input_text','input_image','input_file'])
                 self.assertTrue(body['input'][1]['content'][2]['file_data'].startswith('data:application/pdf;base64,'))
                 return httpx.Response(200,json={'status':'completed','usage':{'input_tokens':100,'output_tokens':25},'output':[{'type':'message','content':[{'type':'output_text','text':'{"reading":"Documento legível.","uncertainties":[]}'}]}]})
@@ -101,6 +103,17 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
             await self.worker.model_read('JSON',[{'type':'text','text':'x'}])
         self.assertFalse(self.costs)
         self.assertFalse(any(r.url.host=='api.anthropic.com' for r in self.requests))
+
+    async def test_structured_study_limits_facts_and_verified_source_ids(self):
+        def handler(request):
+            if request.url.host!='api.openai.com':return httpx.Response(200,json={'ok':True})
+            schema=json.loads(request.content)['text']['format']['schema']['properties']
+            self.assertEqual(schema['facts']['maxItems'],12)
+            self.assertEqual(schema['facts']['items']['properties']['source_id']['enum'],['contact-message'])
+            self.assertEqual(schema['style_examples']['maxItems'],0)
+            return httpx.Response(200,json={'status':'completed','usage':{'input_tokens':100,'output_tokens':25},'output':[{'type':'message','content':[{'type':'output_text','text':json.dumps(ANALYSIS)}]}]})
+        self.handler=handler
+        await self.worker.model_read(STUDY_PROMPT,[{'type':'text','text':json.dumps({'sources':[{'message_id':'contact-message','authorship':'contact','kind':'text','status':'read'}]})}])
 
     async def test_native_pdf_all_pages_and_image_coverage(self):
         from pypdf import PdfWriter

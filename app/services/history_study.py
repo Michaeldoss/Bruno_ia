@@ -20,6 +20,7 @@ import httpx
 logger = logging.getLogger(__name__)
 MAX_BYTES = 24 * 1024 * 1024
 STUDY_MODEL = "gpt-5-mini"
+WORKER_VERSION = "openai-v2"
 _task = None
 _state = {"state": "stopped", "batches": 0, "sources": 0}
 
@@ -128,7 +129,7 @@ class HistoryStudy:
     async def rpc(self, operation, data=None):
         response = await self.client.post(self.base + "/rest/v1/rpc/crm_history_study_work", headers=self.headers,
             json={"p_operation": operation, "p_job": self.job["id"] if self.job else None,
-                  "p_lease": self.job["lease"] if self.job else None, "p_data": {**(data or {}),"worker_version":"openai-v1"}}, timeout=30, follow_redirects=False)
+                  "p_lease": self.job["lease"] if self.job else None, "p_data": {**(data or {}),"worker_version":WORKER_VERSION}}, timeout=30, follow_redirects=False)
         response.raise_for_status()
         return response.json()
 
@@ -152,11 +153,26 @@ class HistoryStudy:
             elif block["type"]=="image":content.append({"type":"input_image","image_url":"data:"+block["source"]["media_type"]+";base64,"+block["source"]["data"]})
             elif block["type"]=="document":content.append({"type":"input_file","filename":"history.pdf","file_data":"data:application/pdf;base64,"+block["source"]["data"]})
             else:raise StudyBlocked("unsupported_model_input")
+        string={"type":"string"}
+        strings={"type":"array","items":string}
+        def object_schema(properties):
+            return {"type":"object","properties":properties,"required":list(properties),"additionalProperties":False}
+        if prompt==STUDY_PROMPT:
+            schema=object_schema({"summary":string,"facts":{"type":"array","maxItems":12,"items":object_schema({"statement":string,"source_id":string,"quote":string})},
+                "style_examples":{"type":"array","maxItems":5,"items":object_schema({"source_id":string,"quote":string,"observation":string})},"uncertainties":strings})
+            current=json.loads(blocks[0]["text"])["sources"]
+            ids=[source["message_id"] for source in current]
+            style_ids=[source["message_id"] for source in current if source["authorship"]=="owner_device" and source["kind"] in {"text","audio"} and source["status"]=="read"]
+            schema["properties"]["facts"]["items"]["properties"]["source_id"]={"type":"string","enum":ids}
+            schema["properties"]["style_examples"]["items"]["properties"]["source_id"]={"type":"string","enum":style_ids or ["no_verified_style_source"]}
+            if not style_ids:schema["properties"]["style_examples"]["maxItems"]=0
+        else:
+            schema=object_schema({"reading":string,"uncertainties":strings})
         response = await self.client.post("https://api.openai.com/v1/responses",
             headers={"Authorization":"Bearer "+self.settings.OPENAI_API_KEY,"content-type":"application/json"},
             json={"model": self.model, "store":False,"max_output_tokens":6000,"reasoning":{"effort":"low"},
                   "input":[{"role":"system","content":prompt},{"role":"user","content":content}],
-                  "text":{"format":{"type":"json_object"}}}, timeout=100, follow_redirects=False)
+                  "text":{"format":{"type":"json_schema","name":"historical_reading","strict":True,"schema":schema}}}, timeout=100, follow_redirects=False)
         if response.is_error:
             try:code=response.json().get("error",{}).get("code")
             except (ValueError,AttributeError):code=None
