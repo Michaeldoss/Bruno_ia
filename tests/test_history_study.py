@@ -111,10 +111,10 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
     async def test_each_rpc_carries_current_worker_version(self):
         await self.worker.rpc('heartbeat')
         body=json.loads(self.requests[-1].content)
-        self.assertEqual(body['p_data']['worker_version'],'openai-v3')
+        self.assertEqual(body['p_data']['worker_version'],'openai-v4')
         await self.worker.rpc('source',{'worker_version':'retired','message_id':'message'})
         body=json.loads(self.requests[-1].content)
-        self.assertEqual(body['p_data']['worker_version'],'openai-v3')
+        self.assertEqual(body['p_data']['worker_version'],'openai-v4')
 
     async def test_openai_responses_maps_media_and_records_before_accepting(self):
         def handler(request):
