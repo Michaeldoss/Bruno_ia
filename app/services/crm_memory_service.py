@@ -162,7 +162,7 @@ def _monthly_usage_brl() -> float:
             db.query(func.coalesce(func.sum(UsageLog.custo_usd), 0.0))
             .filter(
                 UsageLog.agente == "crm_memory",
-                UsageLog.servico.in_(["anthropic", "whisper"]),
+                UsageLog.servico.in_(["anthropic", "openai", "whisper"]),
                 UsageLog.created_at >= month_start,
             )
             .scalar()

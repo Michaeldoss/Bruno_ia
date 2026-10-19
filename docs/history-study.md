@@ -51,9 +51,17 @@ only after checking the reason: update that study to enabled=true/status=queued.
 Already stored sources are reused. A PDF interrupted before its source checkpoint
 may require rereading pages; calls made before interruption remain charged.
 
-Costs use the existing `crm_memory` ledger and combined Anthropic/Whisper monthly
-BRL cap, plus the existing global Anthropic live-service reserve. No new budget,
-provider fallback or automatic increase is introduced. Model costs are recorded
+This study explicitly uses OpenAI `gpt-5-mini` through the Responses API for text,
+image and PDF interpretation, and `whisper-1` for speech. It does not use the
+legacy Anthropic model, whose credit-balance failures were observed in production.
+There is no runtime provider fallback.
+
+Costs use the existing `crm_memory` ledger and combined Anthropic/OpenAI/Whisper monthly
+BRL cap, plus the existing conservative global Anthropic live-service reserve. No new budget or automatic increase is introduced. OpenAI rates are fixed for the selected model at $0.25/M uncached input,
+$0.025/M cached input and $2/M output, including reasoning output tokens.
+Official reference: https://developers.openai.com/api/docs/models/gpt-5-mini
+
+Model costs are recorded
 before accepting its output; ledger failure stops processing. Other service usage
 can still race a budget check, so this is a conservative application guard, not a
 provider-enforced hard cap.

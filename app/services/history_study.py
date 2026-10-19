@@ -19,6 +19,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 MAX_BYTES = 24 * 1024 * 1024
+STUDY_MODEL = "gpt-5-mini"
 _task = None
 _state = {"state": "stopped", "batches": 0, "sources": 0}
 
@@ -145,15 +146,28 @@ class HistoryStudy:
 
     async def model_read(self, prompt, blocks):
         await self.guard(0.20)
-        response = await self.client.post("https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": self.settings.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": self.model, "max_tokens": 2200, "system": prompt, "messages": [{"role": "user", "content": blocks}]}, timeout=100, follow_redirects=False)
+        content=[]
+        for block in blocks:
+            if block["type"]=="text":content.append({"type":"input_text","text":block["text"]})
+            elif block["type"]=="image":content.append({"type":"input_image","image_url":"data:"+block["source"]["media_type"]+";base64,"+block["source"]["data"]})
+            elif block["type"]=="document":content.append({"type":"input_file","filename":"history.pdf","file_data":"data:application/pdf;base64,"+block["source"]["data"]})
+            else:raise StudyBlocked("unsupported_model_input")
+        response = await self.client.post("https://api.openai.com/v1/responses",
+            headers={"Authorization":"Bearer "+self.settings.OPENAI_API_KEY,"content-type":"application/json"},
+            json={"model": self.model, "store":False,"max_output_tokens":6000,"reasoning":{"effort":"low"},
+                  "input":[{"role":"system","content":prompt},{"role":"user","content":content}],
+                  "text":{"format":{"type":"json_object"}}}, timeout=100, follow_redirects=False)
+        if response.is_error:
+            try:code=response.json().get("error",{}).get("code")
+            except (ValueError,AttributeError):code=None
+            if code in {"insufficient_quota","billing_hard_limit_reached","model_not_found","invalid_api_key"}:
+                raise StudyBlocked("budget_provider_"+code if "quota" in code or "billing" in code else "provider_"+code)
         response.raise_for_status()
         body = response.json()
-        await asyncio.to_thread(self.record, "anthropic", body.get("usage", {}))
-        if body.get("stop_reason") != "end_turn":
+        await asyncio.to_thread(self.record, "openai", body.get("usage", {}))
+        if body.get("status") != "completed":
             raise StudyBlocked("incomplete_model_reading")
-        text = "".join(item.get("text", "") for item in body.get("content", []) if item.get("type") == "text")
+        text = "".join(part.get("text", "") for item in body.get("output", []) if item.get("type")=="message" for part in item.get("content",[]) if part.get("type")=="output_text")
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
         value = json.loads(text)
         if not isinstance(value, dict):
@@ -300,7 +314,7 @@ class HistoryStudy:
             try:
                 transcript,seconds=await self.transcribe_file(path)
             except StudyBlocked as error:
-                if str(error).startswith(("budget_","memory_","global_","live_service_","study_paused")):raise
+                if str(error).startswith(("budget_","memory_","global_","live_service_","study_paused","provider_")):raise
                 transcript="[Fala não transcrita: "+str(error)+"]";seconds=None
             details.update(value,method="sampled_video_and_speech",sampled_times_seconds=times,visual_interval_seconds=10,visual_limit_seconds=360,duration_seconds=seconds,full_visual_coverage=False)
             return value.get("reading", "")+"\n"+transcript,"partial",details
@@ -322,7 +336,7 @@ class HistoryStudy:
                 # Authentication/provider/budget failures pause the run rather
                 # than charging subsequent files or pretending to have read them.
                 if isinstance(error,httpx.HTTPStatusError) and error.request.url.host in {"api.anthropic.com","api.openai.com"}:raise
-                if isinstance(error,StudyBlocked) and (str(error).startswith(("budget_","memory_","global_","live_service_","study_paused"))):raise
+                if isinstance(error,StudyBlocked) and (str(error).startswith(("budget_","memory_","global_","live_service_","study_paused","provider_"))):raise
                 reason=str(error) if isinstance(error,StudyBlocked) else type(error).__name__
                 source.update(status="blocked",details={"reason":reason})
         if len(source["text"])>240000:source.update(text=source["text"][:240000],status="partial",details={**source["details"],"text_limit_reached":True})
@@ -384,7 +398,7 @@ def study_budget(estimated_usd=0):
     db=SessionLocal()
     try:
         month=datetime.utcnow().replace(day=1,hour=0,minute=0,second=0,microsecond=0)
-        used=float(db.query(func.coalesce(func.sum(UsageLog.custo_usd),0)).filter(UsageLog.agente=="crm_memory",UsageLog.servico.in_(["anthropic","whisper"]),UsageLog.created_at>=month).scalar())
+        used=float(db.query(func.coalesce(func.sum(UsageLog.custo_usd),0)).filter(UsageLog.agente=="crm_memory",UsageLog.servico.in_(["anthropic","openai","whisper"]),UsageLog.created_at>=month).scalar())
         if not math.isfinite(used) or (used+estimated_usd)*USD_BRL_SAFETY_RATE>=MONTHLY_BUDGET_BRL:
             return {"allowed":False,"reason":"memory_monthly_limit"}
         return {"allowed":True}
@@ -393,15 +407,18 @@ def study_budget(estimated_usd=0):
 
 def record_study_cost(provider,usage):
     from app.models.database import SessionLocal,UsageLog
-    from app.services.usage_tracker import calcular_custo_anthropic,PRECO_WHISPER_USD_MIN
-    from app.services.crm_memory_service import MODEL
+    from app.services.usage_tracker import PRECO_WHISPER_USD_MIN
+    if provider not in {"openai","whisper"}:raise StudyBlocked("budget_unknown_pricing")
     a,b,c,d=(int(usage.get(key,0) or 0) for key in ("input_tokens","output_tokens","cache_creation_input_tokens","cache_read_input_tokens"))
+    if provider=="openai":
+        d=int((usage.get("input_tokens_details") or {}).get("cached_tokens",0) or 0)
+        if min(a,b,d)<0 or d>a:raise StudyBlocked("budget_invalid_usage")
     minutes=float(usage.get("seconds",0))/60
-    cost=calcular_custo_anthropic(MODEL,a,b,c,d) if provider=="anthropic" else minutes*PRECO_WHISPER_USD_MIN
+    cost=((a-d)*0.25+d*0.025+b*2)/1000000 if provider=="openai" else minutes*PRECO_WHISPER_USD_MIN
     if cost<=0:raise StudyBlocked("budget_unknown_pricing")
     db=SessionLocal()
     try:
-        db.add(UsageLog(agente="crm_memory",servico=provider,model=MODEL if provider=="anthropic" else "whisper-1",input_tokens=a,output_tokens=b,cache_creation_tokens=c,cache_read_tokens=d,quantidade=minutes,custo_usd=cost))
+        db.add(UsageLog(agente="crm_memory",servico=provider,model=STUDY_MODEL if provider=="openai" else "whisper-1",input_tokens=a,output_tokens=b,cache_creation_tokens=c,cache_read_tokens=d,quantidade=minutes,custo_usd=cost))
         db.commit()
     finally:db.close()
 
@@ -409,12 +426,11 @@ def record_study_cost(provider,usage):
 async def _loop():
     try:
         from app.config import get_settings
-        from app.services.crm_memory_service import MODEL
         settings=get_settings()
-        if any(not value or value=="stub" for value in (settings.SUPABASE_SERVICE_ROLE_KEY,settings.ANTHROPIC_API_KEY,settings.OPENAI_API_KEY)):
+        if any(not value or value=="stub" for value in (settings.SUPABASE_SERVICE_ROLE_KEY,settings.OPENAI_API_KEY)):
             _state["state"]="configuration_required";return
         async with httpx.AsyncClient() as client:
-            worker=HistoryStudy(client,settings,budget=study_budget,record=record_study_cost,model=MODEL)
+            worker=HistoryStudy(client,settings,budget=study_budget,record=record_study_cost,model=STUDY_MODEL)
             while True:
                 try:await worker.tick()
                 except asyncio.CancelledError:raise
