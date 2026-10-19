@@ -19,6 +19,14 @@ internal notes and generated replies cannot teach the owner's voice. Even device
 messages remain candidates for validation; device provenance alone cannot prove
 who physically wrote a message.
 
+Device-sent messages can also contain copied third-party payment/contact details.
+Forwarded messages with available metadata, payment identifiers, long number
+sequences, email addresses and URLs are excluded from style examples, both in
+the model's source-id choices and after generation. They remain historical
+context; their presence does not authorize using them as current Doss billing
+instructions. Missing forwarding metadata is unknown provenance, not proof of
+original authorship. Examples remain candidates for review.
+
 Strict Structured Outputs bounds the evidence arrays and restricts source ids.
 Unsupported quotations or unverified style entries are discarded, never saved as
 facts/examples. Rejection reasons and counts remain visible; any such gap marks

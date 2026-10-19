@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import httpx
 
-from app.services.history_study import HistoryStudy, StudyBlocked, STUDY_PROMPT, authorship, kind_of, validate_analysis
+from app.services.history_study import HistoryStudy, StudyBlocked, STUDY_PROMPT, authorship, kind_of, validate_analysis, eligible_style_source, message_is_forwarded
 
 SETTINGS=SimpleNamespace(SUPABASE_URL='https://db.example',SUPABASE_SERVICE_ROLE_KEY='test-db-key',ANTHROPIC_API_KEY='test-ai-key',OPENAI_API_KEY='test-audio-key')
 JOB={'id':'job','study_id':'study','org_id':'org','owner_id':'owner','conversation_id':'conv','lease':'lease','snapshot_at':'2026-10-19T10:00:00Z'}
@@ -63,6 +63,29 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['rejected_evidence_count'],1)
         self.assertNotIn('Pagamento confirmado',json.dumps(result))
         with self.assertRaises(StudyBlocked):validate_analysis({**ANALYSIS,'facts':None},[source])
+
+    def test_copied_payment_and_contact_details_cannot_teach_owner_style(self):
+        base={'message_id':'message','authorship':'owner_device','kind':'text','status':'read','details':{}}
+        for text in ['Chave Pix 00000000000 - Outra empresa','Me chama no (00) 90000-0000','Contato: cliente@example.com','Veja https://example.com/oferta','Agência 0000, conta bancária 123-4']:
+            source={**base,'text':text}
+            self.assertFalse(eligible_style_source(source),text)
+            result=validate_analysis({**copy.deepcopy(ANALYSIS),'style_examples':[{'source_id':'message','quote':text,'observation':'Candidate'}]},[source])
+            self.assertEqual(result['style_examples'],[])
+        for text in ['Vou conferir pra ti.','Daí me manda o comprovante pra poder conferir.','Essa é a Epson F6370 com cabeça i3200?']:
+            self.assertTrue(eligible_style_source({**base,'text':text}))
+        self.assertFalse(eligible_style_source({**base,'text':'Vou conferir pra ti.','details':{'forwarded':True}}))
+
+    def test_forwarding_metadata_is_preserved_without_guessing_from_words(self):
+        for message in [{'is_forwarded':True},{'payload':{'is_forwarded':'true'}},{'payload':{'contextInfo':{'forwardingScore':2}}}]:
+            self.assertTrue(message_is_forwarded(message))
+        self.assertFalse(message_is_forwarded({'content':'Vou encaminhar ao técnico','payload':{'is_forwarded':'false'}}))
+        self.assertFalse(message_is_forwarded({'payload':{'contextInfo':['unexpected']}}))
+
+    async def test_cached_source_keeps_forwarding_metadata_for_style_filter(self):
+        self.handler=lambda r:httpx.Response(200,json=[{'kind':'text','authorship':'owner_device','status':'read','source_text':'Texto copiado','details':{}}])
+        source=await self.worker.source_read({**copy.deepcopy(MESSAGE),'is_forwarded':True})
+        self.assertTrue(source['details']['forwarded'])
+        self.assertFalse(eligible_style_source(source))
 
     async def test_media_scope_redirect_size_and_no_database_credential(self):
         for url in ['https://other.example/audio','https://db.example/storage/v1/object/public/whatsapp-media/other/conv/a',
