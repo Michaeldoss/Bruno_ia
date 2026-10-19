@@ -70,6 +70,30 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.requests),1)
         self.assertEqual(details['method'],'existing_transcript')
 
+    async def test_openai_responses_maps_media_and_records_before_accepting(self):
+        def handler(request):
+            if request.url.host=='api.openai.com':
+                body=json.loads(request.content)
+                self.assertFalse(body['store'])
+                self.assertEqual([x['type'] for x in body['input'][1]['content']],['input_text','input_image','input_file'])
+                self.assertTrue(body['input'][1]['content'][2]['file_data'].startswith('data:application/pdf;base64,'))
+                return httpx.Response(200,json={'status':'completed','usage':{'input_tokens':100,'output_tokens':25},'output':[{'type':'message','content':[{'type':'output_text','text':'{"reading":"Documento legível.","uncertainties":[]}'}]}]})
+            return httpx.Response(200,json={'ok':True})
+        self.handler=handler
+        result=await self.worker.model_read('Retorne JSON.',[{'type':'text','text':'Contexto'}, {'type':'image','source':{'media_type':'image/jpeg','data':'test'}},{'type':'document','source':{'media_type':'application/pdf','data':'test'}}])
+        self.assertEqual(result['reading'],'Documento legível.')
+        self.assertEqual(self.costs[0][0],'openai')
+        self.handler=lambda request:httpx.Response(200,json={'status':'incomplete','usage':{'input_tokens':100,'output_tokens':6000},'output':[]}) if request.url.host=='api.openai.com' else httpx.Response(200,json={'ok':True})
+        with self.assertRaises(StudyBlocked):await self.worker.model_read('JSON',[{'type':'text','text':'x'}])
+        self.assertEqual(len(self.costs),2,'charged incomplete output is still accounted')
+
+    async def test_provider_quota_does_not_fall_back_or_consume_more_sources(self):
+        self.handler=lambda request:httpx.Response(429,json={'error':{'code':'insufficient_quota'}}) if request.url.host=='api.openai.com' else httpx.Response(200,json={'ok':True})
+        with self.assertRaisesRegex(StudyBlocked,'budget_provider_insufficient_quota'):
+            await self.worker.model_read('JSON',[{'type':'text','text':'x'}])
+        self.assertFalse(self.costs)
+        self.assertFalse(any(r.url.host=='api.anthropic.com' for r in self.requests))
+
     async def test_native_pdf_all_pages_and_image_coverage(self):
         from pypdf import PdfWriter
         from PIL import Image
