@@ -19,6 +19,13 @@ internal notes and generated replies cannot teach the owner's voice. Even device
 messages remain candidates for validation; device provenance alone cannot prove
 who physically wrote a message.
 
+Strict Structured Outputs bounds the evidence arrays and restricts source ids.
+Unsupported quotations or unverified style entries are discarded, never saved as
+facts/examples. Rejection reasons and counts remain visible; any such gap marks
+the conversation partial when its processing ends. The narrative summary is
+explicitly an unverified synthesis, not approved customer knowledge. One rejected
+interpretation does not stop the rest of the historical study.
+
 ## Media coverage
 
 - Audio: reuse an existing completed transcript, otherwise Whisper with full
@@ -44,6 +51,10 @@ does not create or enable a paid run. Deploy this worker, then service-role call
 `crm_history_study_start(org_uuid, owner_uuid)`. It idempotently creates a disabled
 queue. Enable only that study row to start. The worker polls every fifteen seconds
 and uses durable leases, source hashes, per-message cache and batch cursors.
+
+Apply all subsequent `crm_history_study_*` migrations before the current reader.
+Every RPC carries its reader version; retired processes cannot claim, heartbeat,
+save or pause current work during rolling deployment overlap.
 
 Sources changed before checkpoint must be reread. Worker interruptions retry up
 to three times; provider, persistence and budget failures pause the study. Resume

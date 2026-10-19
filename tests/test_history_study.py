@@ -36,11 +36,17 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
         analysis={**copy.deepcopy(ANALYSIS),'style_examples':[{'source_id':'message','quote':'Vou conferir','observation':'Resposta curta de acompanhamento.'}]}
         self.assertEqual(validate_analysis(analysis,[source])['status'],'research_candidate')
         for bad in ['automation','owner_candidate','unknown','contact','other_staff']:
-            with self.assertRaises(StudyBlocked):validate_analysis(copy.deepcopy(analysis),[{**source,'authorship':bad}])
+            result=validate_analysis(copy.deepcopy(analysis),[{**source,'authorship':bad}])
+            self.assertEqual(result['style_examples'],[])
+            self.assertEqual(result['rejected_evidence_count'],1)
         for kind,status in [('image','read'),('video','partial'),('text','blocked'),('document','read')]:
-            with self.assertRaises(StudyBlocked):validate_analysis(copy.deepcopy(analysis),[{**source,'kind':kind,'status':status}])
+            result=validate_analysis(copy.deepcopy(analysis),[{**source,'kind':kind,'status':status}])
+            self.assertEqual(result['style_examples'],[])
         analysis['style_examples'][0]['quote']='Já foi enviado'
-        with self.assertRaises(StudyBlocked):validate_analysis(analysis,[source])
+        result=validate_analysis(analysis,[source])
+        self.assertEqual(result['style_examples'],[])
+        self.assertEqual(result['rejected_evidence_count'],1)
+        self.assertEqual(result['summary_status'],'unverified_synthesis')
 
     def test_authorship_and_media_kind(self):
         self.assertEqual(authorship(MESSAGE,'owner'),'owner_device')
@@ -48,6 +54,15 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(authorship({**MESSAGE,'is_internal_note':True},'owner'),'other_staff')
         self.assertEqual(kind_of({'type':'media','payload':{'media_mime':'application/pdf'}}),'document')
         self.assertEqual(kind_of({'type':'media','payload':{'media_mime':'audio/ogg'}}),'audio')
+
+    def test_unmatched_fact_is_discarded_without_losing_valid_evidence(self):
+        source={'message_id':'message','text':'Quero papel de 914.','authorship':'contact','kind':'text','status':'read'}
+        value={**copy.deepcopy(ANALYSIS),'facts':[{'source_id':'message','quote':'papel de 914','statement':'Interesse em papel de 914.'},{'source_id':'message','quote':'Já paguei','statement':'Pagamento confirmado.'}]}
+        result=validate_analysis(value,[source])
+        self.assertEqual(len(result['facts']),1)
+        self.assertEqual(result['rejected_evidence_count'],1)
+        self.assertNotIn('Pagamento confirmado',json.dumps(result))
+        with self.assertRaises(StudyBlocked):validate_analysis({**ANALYSIS,'facts':None},[source])
 
     async def test_media_scope_redirect_size_and_no_database_credential(self):
         for url in ['https://other.example/audio','https://db.example/storage/v1/object/public/whatsapp-media/other/conv/a',
@@ -73,10 +88,10 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
     async def test_each_rpc_carries_current_worker_version(self):
         await self.worker.rpc('heartbeat')
         body=json.loads(self.requests[-1].content)
-        self.assertEqual(body['p_data']['worker_version'],'openai-v2')
+        self.assertEqual(body['p_data']['worker_version'],'openai-v3')
         await self.worker.rpc('source',{'worker_version':'retired','message_id':'message'})
         body=json.loads(self.requests[-1].content)
-        self.assertEqual(body['p_data']['worker_version'],'openai-v2')
+        self.assertEqual(body['p_data']['worker_version'],'openai-v3')
 
     async def test_openai_responses_maps_media_and_records_before_accepting(self):
         def handler(request):
