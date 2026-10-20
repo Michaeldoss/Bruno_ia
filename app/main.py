@@ -11,6 +11,7 @@ from app.services import memory_worker_alive
 from app.services.realtime_audio import start_audio_worker, stop_audio_worker, audio_worker_status
 from app.services.crm_agent_worker import start_agent_worker, stop_agent_worker, agent_worker_status
 from app.services.order_notifications import start_order_notifications, stop_order_notifications, order_notifications_status
+from app.services.uniplus_orders import start_uniplus_orders, stop_uniplus_orders, uniplus_orders_status
 from app.services.history_study import start_history_study, stop_history_study, history_study_status
 from app.models.database import SessionLocal, Conversation, Lead, LeadState, UsageLog
 from datetime import datetime, timedelta
@@ -32,9 +33,11 @@ async def lifespan(app: FastAPI):
     start_agent_worker()
     start_history_study()
     start_order_notifications()
+    start_uniplus_orders()
     try:
         yield
     finally:
+        await stop_uniplus_orders()
         await stop_order_notifications()
         await stop_history_study()
         await stop_agent_worker()
@@ -62,6 +65,7 @@ def health_check():
         "crm_agent_worker": agent_worker_status(),
         "history_study": history_study_status(),
         "order_notifications": order_notifications_status(),
+        "uniplus_orders": uniplus_orders_status(),
     }
 
 
