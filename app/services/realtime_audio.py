@@ -25,6 +25,23 @@ class InvalidAudio(ValueError):
     pass
 
 
+def transcription_failure(response):
+    """Keep an actionable, allowlisted error code; never persist provider bodies."""
+    status = response.status_code
+    code = None
+    try:
+        error = response.json().get('error')
+        if isinstance(error, dict):
+            code = error.get('code') or error.get('type')
+    except (ValueError, AttributeError):
+        pass
+    if code in ('insufficient_quota', 'billing_hard_limit_reached', 'billing_not_active'):
+        return 'provider_' + code, False
+    if code in ('rate_limit_exceeded', 'invalid_api_key', 'model_not_found'):
+        return 'provider_' + code, status == 429 or status >= 500
+    return 'provider_http_' + str(status), status == 429 or status >= 500
+
+
 def media_source(value, supabase_url):
     """Only persisted CRM media, never arbitrary URLs or redirect targets."""
     if not isinstance(value, str):
@@ -157,8 +174,10 @@ class AudioWorker:
 
     async def process(self, org_id, job):
         result = {"p_org_id": org_id, "p_message_id": job["message_id"], "p_token": job["claim_token"]}
+        request_stage = 'media'
         try:
             content, mime = await load_audio(self.client, job["media_url"], self.base)
+            request_stage = 'transcription'
             response = await self.client.post("https://api.openai.com/v1/audio/transcriptions",
                 headers={"Authorization": "Bearer " + self.openai_key},
                 files={"file": ("audio." + EXTENSIONS[mime], content, mime)},
@@ -177,8 +196,12 @@ class AudioWorker:
         except InvalidAudio as exc:
             result.update(p_error=str(exc), p_retry=False)
         except httpx.HTTPStatusError as exc:
-            status = exc.response.status_code
-            result.update(p_error="provider_http_" + str(status), p_retry=status == 429 or status >= 500)
+            if request_stage == 'media':
+                status = exc.response.status_code
+                result.update(p_error='media_http_' + str(status), p_retry=status == 429 or status >= 500)
+            else:
+                reason, retry = transcription_failure(exc.response)
+                result.update(p_error=reason, p_retry=retry)
         except (httpx.RequestError, TimeoutError):
             result.update(p_error="provider_connection_failed", p_retry=True)
         except Exception:
