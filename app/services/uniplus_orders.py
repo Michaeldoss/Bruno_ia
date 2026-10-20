@@ -1,4 +1,4 @@
-"""Poll ERP DAVs every minute; only create missing operational cards in waiting."""
+"""Poll ERP DAVs every ten seconds; only create missing operational cards in waiting."""
 import asyncio
 import logging
 import time
@@ -127,8 +127,8 @@ async def _loop():
             except Exception:
                 _state['state'] = 'unavailable'
                 logger.warning('Uniplus order queue unavailable')
-            # Database enforces a 60-second interval across processes/restarts.
-            await asyncio.sleep(5)
+            # Database enforces a 10-second interval across processes/restarts.
+            await asyncio.sleep(1)
 
 
 def start_uniplus_orders():
@@ -151,4 +151,4 @@ async def stop_uniplus_orders():
 
 
 def uniplus_orders_status():
-    return {**_state, 'task_alive': bool(_task and not _task.done()), 'interval_seconds': 60}
+    return {**_state, 'task_alive': bool(_task and not _task.done()), 'interval_seconds': 10}
