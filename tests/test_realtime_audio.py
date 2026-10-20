@@ -16,6 +16,42 @@ JOB = {'message_id': 'message', 'conversation_id': 'conversation', 'claim_token'
 
 
 class WorkerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_quota_exhaustion_is_distinct_from_transient_rate_limit(self):
+        import json
+        for code, expected_status in [('insufficient_quota', 'rt_failed'), ('rate_limit_exceeded', 'rt_waiting_1')]:
+            writes = []
+            async def transport(request):
+                if request.url.host == 'api.openai.com':
+                    return httpx.Response(429, json={'error': {'code': code, 'message': 'private provider detail'}})
+                writes.append(json.loads(request.content))
+                return httpx.Response(200, json=[{'id': 'stored'}])
+            async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+                worker = audio.AudioWorker(client, supabase_url='https://crm.supabase.co', service_key='server-key', openai_key='openai-key', organizations=[ORG])
+                await worker.process(ORG, JOB)
+            self.assertEqual(writes[0]['error'], 'provider_' + code)
+            self.assertEqual(writes[0]['status'], expected_status)
+            self.assertNotIn('private provider detail', json.dumps(writes))
+
+    async def test_media_failure_is_not_reported_as_provider_quota(self):
+        import json
+        writes = []
+        async def transport(request):
+            self.assertNotEqual(request.url.host, 'api.openai.com')
+            if request.method == 'GET':
+                return httpx.Response(429, json={'error': {'code': 'insufficient_quota'}})
+            writes.append(json.loads(request.content))
+            return httpx.Response(200, json=[{'id': 'stored'}])
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+            worker = audio.AudioWorker(client, supabase_url='https://crm.supabase.co', service_key='server-key', openai_key='openai-key', organizations=[ORG])
+            await worker.process(ORG, {**JOB, 'media_url': 'https://crm.supabase.co/storage/v1/object/public/audio.ogg'})
+        self.assertEqual(writes[0]['error'], 'media_http_429')
+        self.assertEqual(writes[0]['status'], 'rt_waiting_1')
+
+    def test_unrecognized_provider_errors_never_persist_arbitrary_text(self):
+        response = httpx.Response(429, json={'error': {'code': 'secret-looking-value', 'message': 'sensitive'}})
+        self.assertEqual(audio.transcription_failure(response), ('provider_http_429', True))
+        self.assertEqual(audio.transcription_failure(httpx.Response(503, text='not JSON')), ('provider_http_503', True))
+
     async def test_transcript_saved_with_same_tenant_message_and_claim(self):
         calls = []
         async def transport(request):
