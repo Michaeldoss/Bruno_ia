@@ -131,9 +131,41 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
         result=await self.worker.model_read('Retorne JSON.',[{'type':'text','text':'Contexto'}, {'type':'image','source':{'media_type':'image/jpeg','data':'test'}},{'type':'document','source':{'media_type':'application/pdf','data':'test'}}])
         self.assertEqual(result['reading'],'Documento legível.')
         self.assertEqual(self.costs[0][0],'openai')
-        self.handler=lambda request:httpx.Response(200,json={'status':'incomplete','usage':{'input_tokens':100,'output_tokens':6000},'output':[]}) if request.url.host=='api.openai.com' else httpx.Response(200,json={'ok':True})
+        self.handler=lambda request:httpx.Response(200,json={'status':'incomplete','usage':{'input_tokens':100,'output_tokens':100},'output':[]}) if request.url.host=='api.openai.com' else httpx.Response(200,json={'ok':True})
         with self.assertRaises(StudyBlocked):await self.worker.model_read('JSON',[{'type':'text','text':'x'}])
         self.assertEqual(len(self.costs),2,'charged incomplete output is still accounted')
+
+    async def test_output_exhaustion_retries_complete_reading_and_accounts_each_attempt(self):
+        limits=[]
+        def handler(request):
+            if request.url.host!='api.openai.com':return httpx.Response(200,json={'ok':True})
+            limits.append(json.loads(request.content)['max_output_tokens'])
+            if len(limits)==1:
+                return httpx.Response(200,json={'status':'incomplete','incomplete_details':{'reason':'max_output_tokens'},'usage':{'output_tokens':6000},'output':[]})
+            return httpx.Response(200,json={'status':'completed','usage':{'output_tokens':30},'output':[{'type':'message','content':[{'type':'output_text','text':'{"reading":"Completo","uncertainties":[]}'}]}]})
+        self.handler=handler
+        self.assertEqual((await self.worker.model_read('JSON',[{'type':'text','text':'x'}]))['reading'],'Completo')
+        self.assertEqual(limits,[6000,12000]);self.assertEqual(len(self.costs),2)
+        self.assertEqual(sum(r.url.host=='db.example' for r in self.requests),2,'renew lease and check budget before retry')
+
+    async def test_output_retry_is_bounded_and_content_filter_not_retried(self):
+        for reason,expected,calls in [('max_output_tokens','model_output_limit',3),('content_filter','incomplete_model_reading',1)]:
+            self.requests.clear()
+            self.handler=lambda request:httpx.Response(200,json={'status':'incomplete','incomplete_details':{'reason':reason},'usage':{'output_tokens':6000},'output':[]}) if request.url.host=='api.openai.com' else httpx.Response(200,json={'ok':True})
+            with self.assertRaisesRegex(StudyBlocked,expected):
+                await self.worker.model_read('JSON',[{'type':'text','text':'x'}])
+            self.assertEqual(sum(r.url.host=='api.openai.com' for r in self.requests),calls)
+
+    async def test_retry_checks_budget_before_another_provider_call(self):
+        checks=[]
+        def budget(estimate):
+            checks.append(estimate)
+            return {'allowed':len(checks)==1,'reason':'memory_monthly_limit'}
+        self.worker.budget=budget
+        self.handler=lambda request:httpx.Response(200,json={'status':'incomplete','incomplete_details':{'reason':'max_output_tokens'},'usage':{'output_tokens':6000},'output':[]}) if request.url.host=='api.openai.com' else httpx.Response(200,json={'ok':True})
+        with self.assertRaisesRegex(StudyBlocked,'memory_monthly_limit'):
+            await self.worker.model_read('JSON',[{'type':'text','text':'x'}])
+        self.assertEqual(sum(r.url.host=='api.openai.com' for r in self.requests),1)
 
     async def test_provider_quota_does_not_fall_back_or_consume_more_sources(self):
         self.handler=lambda request:httpx.Response(429,json={'error':{'code':'insufficient_quota'}}) if request.url.host=='api.openai.com' else httpx.Response(200,json={'ok':True})
@@ -238,5 +270,24 @@ class StudyTests(unittest.IsolatedAsyncioTestCase):
         await self.worker.tick()
         self.assertEqual(finished[0]['cursor_id'],'0')
         self.assertEqual(finished[0]['analysis']['coverage']['sources'],1)
+
+    async def test_output_limited_batch_shrinks_without_advancing_over_unanalysed_sources(self):
+        messages=[{**copy.deepcopy(MESSAGE),'id':str(i)} for i in range(4)]
+        finished=[];sizes=[]
+        async def rpc(op,data=None):
+            if op=='claim':return copy.deepcopy(JOB)
+            if op=='batch':return messages
+            if op=='finish':finished.append(data)
+            return {'ok':True}
+        async def source(message):return {'message_id':message['id'],'authorship':'owner_device','kind':'text','status':'read','text':'Texto'}
+        async def rows(table,params):return []
+        async def model(prompt,blocks):
+            sizes.append(len(json.loads(blocks[0]['text'])['sources']))
+            if len(sizes)==1:raise StudyBlocked('model_output_limit')
+            return copy.deepcopy(ANALYSIS)
+        self.worker.rpc=rpc;self.worker.source_read=source;self.worker.rows=rows;self.worker.model_read=model
+        await self.worker.tick()
+        self.assertEqual(sizes,[4,2]);self.assertEqual(finished[0]['cursor_id'],'1')
+        self.assertEqual(finished[0]['analysis']['coverage']['sources'],2)
 
 if __name__=='__main__':unittest.main()

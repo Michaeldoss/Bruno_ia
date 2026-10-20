@@ -197,21 +197,35 @@ class HistoryStudy:
             if not style_ids:schema["properties"]["style_examples"]["maxItems"]=0
         else:
             schema=object_schema({"reading":string,"uncertainties":strings})
-        response = await self.client.post("https://api.openai.com/v1/responses",
-            headers={"Authorization":"Bearer "+self.settings.OPENAI_API_KEY,"content-type":"application/json"},
-            json={"model": self.model, "store":False,"max_output_tokens":6000,"reasoning":{"effort":"low"},
-                  "input":[{"role":"system","content":prompt},{"role":"user","content":content}],
-                  "text":{"format":{"type":"json_schema","name":"historical_reading","strict":True,"schema":schema}}}, timeout=100, follow_redirects=False)
-        if response.is_error:
-            try:code=response.json().get("error",{}).get("code")
-            except (ValueError,AttributeError):code=None
-            if code in {"insufficient_quota","billing_hard_limit_reached","model_not_found","invalid_api_key"}:
-                raise StudyBlocked("budget_provider_"+code if "quota" in code or "billing" in code else "provider_"+code)
-        response.raise_for_status()
-        body = response.json()
-        await asyncio.to_thread(self.record, "openai", body.get("usage", {}))
-        if body.get("status") != "completed":
-            raise StudyBlocked("incomplete_model_reading")
+        # Reasoning and visible JSON share the output allowance. Retry only
+        # output exhaustion; never accept partial JSON or bypass a refusal.
+        for attempt, limit in enumerate((6000, 12000, 24000)):
+            if attempt:
+                await self.guard(0.20)
+            response = await self.client.post("https://api.openai.com/v1/responses",
+                headers={"Authorization":"Bearer "+self.settings.OPENAI_API_KEY,"content-type":"application/json"},
+                json={"model": self.model, "store":False,"max_output_tokens":limit,"reasoning":{"effort":"low"},
+                      "input":[{"role":"system","content":prompt},{"role":"user","content":content}],
+                      "text":{"format":{"type":"json_schema","name":"historical_reading","strict":True,"schema":schema}}}, timeout=240, follow_redirects=False)
+            if response.is_error:
+                try:code=response.json().get("error",{}).get("code")
+                except (ValueError,AttributeError):code=None
+                if code in {"insufficient_quota","billing_hard_limit_reached","model_not_found","invalid_api_key"}:
+                    raise StudyBlocked("budget_provider_"+code if "quota" in code or "billing" in code else "provider_"+code)
+            response.raise_for_status()
+            body = response.json()
+            await asyncio.to_thread(self.record, "openai", body.get("usage", {}))
+            if body.get("status") == "completed":
+                break
+            reason = (body.get("incomplete_details") or {}).get("reason")
+            exhausted = body.get("status") == "incomplete" and (
+                reason == "max_output_tokens" or
+                reason is None and (body.get("usage") or {}).get("output_tokens", 0) >= limit)
+            if not exhausted:
+                raise StudyBlocked("incomplete_model_reading")
+            if attempt == 2:
+                raise StudyBlocked("model_output_limit")
+            logger.info("[HISTORY STUDY] Retrying output-limited reading (attempt %s)", attempt + 2)
         text = "".join(part.get("text", "") for item in body.get("output", []) if item.get("type")=="message" for part in item.get("content",[]) if part.get("type")=="output_text")
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
         value = json.loads(text)
@@ -393,8 +407,11 @@ class HistoryStudy:
     async def tick(self):
         self.job=await self.rpc("claim")
         if not self.job:
-            _state["state"]="idle";return
+            if _state["state"] != "paused":
+                _state["state"]="idle"
+            return
         _state["state"]="studying"
+        _state.pop("reason", None)
         try:
             await self.guard()
             messages=await self.rpc("batch")
@@ -414,8 +431,18 @@ class HistoryStudy:
                 if len(item.get("source_text", ""))>4000:
                     item["source_text"]=item["source_text"][:4000]
                     item["context_excerpt_only"]=True
-            prompt_sources=[{**{k:s[k] for k in ("message_id","at","authorship","kind","status","text")},"style_eligible":eligible_style_source(s)} for s in sources]
-            result=await self.model_read(STUDY_PROMPT,[{"type":"text","text":json.dumps({"scope":"historical_snapshot","snapshot_at":self.job["snapshot_at"],"previous_context_only":list(reversed(previous)),"sources":prompt_sources},ensure_ascii=False)}])
+            while True:
+                prompt_sources=[{**{k:s[k] for k in ("message_id","at","authorship","kind","status","text")},"style_eligible":eligible_style_source(s)} for s in sources]
+                try:
+                    result=await self.model_read(STUDY_PROMPT,[{"type":"text","text":json.dumps({"scope":"historical_snapshot","snapshot_at":self.job["snapshot_at"],"previous_context_only":list(reversed(previous)),"sources":prompt_sources},ensure_ascii=False)}])
+                    break
+                except StudyBlocked as error:
+                    if str(error) != "model_output_limit" or len(sources) <= 1:
+                        raise
+                    # The remaining sources stay cached and beyond the cursor,
+                    # so the next batch reads them instead of skipping content.
+                    sources=sources[:max(1, len(sources)//2)]
+                    logger.info("[HISTORY STUDY] Reducing analysis to %s sources", len(sources))
             analysis=validate_analysis(result,sources)
             if not (await self.rpc("finish",{"cursor_id":sources[-1]["message_id"],"analysis":analysis}) or {}).get("ok"):
                 raise StudyBlocked("study_persistence_unconfirmed")
