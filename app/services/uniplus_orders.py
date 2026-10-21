@@ -132,6 +132,8 @@ async def _loop():
 
 
 def start_uniplus_orders():
+    from app.services.crm_erp_bridge import start_erp_bridge
+    start_erp_bridge()
     global _task
     if _task is None or _task.done():
         _state['state'] = 'starting'
@@ -139,6 +141,8 @@ def start_uniplus_orders():
 
 
 async def stop_uniplus_orders():
+    from app.services.crm_erp_bridge import stop_erp_bridge
+    await stop_erp_bridge()
     global _task
     if _task:
         _task.cancel()
@@ -151,4 +155,6 @@ async def stop_uniplus_orders():
 
 
 def uniplus_orders_status():
-    return {**_state, 'task_alive': bool(_task and not _task.done()), 'interval_seconds': 10}
+    from app.services.crm_erp_bridge import erp_bridge_status
+    return {**_state, 'task_alive': bool(_task and not _task.done()), 'interval_seconds': 10,
+            'erp_bridge': erp_bridge_status()}
