@@ -46,6 +46,8 @@ async def _loop():
 
 
 def start_order_notifications():
+    from app.services.technician_calendar import start_technician_calendar
+    start_technician_calendar()
     global _task
     if _task is None or _task.done():
         _state["state"] = "starting"
@@ -53,6 +55,8 @@ def start_order_notifications():
 
 
 async def stop_order_notifications():
+    from app.services.technician_calendar import stop_technician_calendar
+    await stop_technician_calendar()
     global _task
     if _task:
         _task.cancel()
@@ -65,4 +69,6 @@ async def stop_order_notifications():
 
 
 def order_notifications_status():
-    return {**_state, "task_alive": bool(_task and not _task.done())}
+    from app.services.technician_calendar import technician_calendar_status
+    return {**_state, "task_alive": bool(_task and not _task.done()),
+            "technician_calendar": technician_calendar_status()}
