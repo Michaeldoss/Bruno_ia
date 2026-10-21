@@ -7,7 +7,7 @@ import asyncio
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -15,7 +15,7 @@ import httpx
 ERP_ORIGIN = 'https://vzan-getcard01.getcard.uniplusweb.com'
 logger = logging.getLogger(__name__)
 _task = None
-_state = {'state': 'stopped', 'release': 'erp-bridge-1'}
+_state = {'state': 'stopped', 'release': 'erp-bridge-2'}
 ENTITY_FIELDS = ('codigo','nome','razaoSocial','tipo','inativo','creditoRestrito','limiteCredito','cnpjCpf','cep','cepEntrega','endereco','numeroEndereco','bairro','cidade','estado')
 ORDER_FIELDS = ('codigo','cliente','tipoDocumento','status','data','vendedor','filial','condicaoPagamento','tipoDocumentoFinanceiro','codigoTransportadora','codigoTipoFrete','valor','valorFrete','desconto','percentualDescontoSubtotal','valorDescontoItens','codigoECommerce','cepEntrega','itens')
 ITEM_FIELDS = ('produto','nomeProduto','descricao','quantidade','precoUnitario','precoTotal','desconto','isBrinde','codigoUnidadeMedida')
@@ -58,6 +58,47 @@ def scalar_stock(value):
     if not number.is_finite():
         raise BridgeFailure('stock_response_invalid')
     return float(number)
+
+
+def duplicate_candidates(records, customer, requested_items, source_date):
+    """Conservative duplicate gate: freight/price differences never hide a sale.
+
+    A positive match requires review, not automatic adoption or an ERP rewrite.
+    Call only with all recent customer orders, never a truncated history.
+    """
+    code(customer)
+    try:
+        if date.fromisoformat(source_date).isoformat() != source_date:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise BridgeFailure('invalid_order_source_date') from None
+    if not isinstance(requested_items, list) or not 1 <= len(requested_items) <= 12:
+        raise BridgeFailure('invalid_requested_items')
+    needed = {}
+    for item in requested_items:
+        product = code(item.get('product_code'))
+        quantity = item.get('quantity')
+        if type(quantity) is not int or not 1 <= quantity <= 1000 or product in needed:
+            raise BridgeFailure('invalid_requested_quantity')
+        needed[product] = quantity
+    matches = []
+    for record in records:
+        if str(record.get('cliente')) != customer:
+            raise BridgeFailure('erp_customer_mismatch')
+        if str(record.get('data', '')) < source_date:
+            continue
+        if str(record.get('tipoDocumento')) not in ('4', '6') or str(record.get('status')) not in ('1','2','4','7','8','9'):
+            continue
+        if not isinstance(record.get('itens'), list):
+            raise BridgeFailure('duplicate_check_items_missing')
+        present = {}
+        for item in record['itens']:
+            product = str(item.get('produto', ''))
+            quantity = scalar_stock(item.get('quantidade'))
+            present[product] = present.get(product, 0) + quantity
+        if all(present.get(product, 0) >= qty for product, qty in needed.items()):
+            matches.append(project(record, ('codigo','data','tipoDocumento','status','vendedor','valor','valorFrete','condicaoPagamento')))
+    return matches
 
 
 class BridgeWorker:
@@ -117,15 +158,28 @@ class BridgeWorker:
         if str(entity.get('codigo')) != customer:
             raise BridgeFailure('erp_customer_mismatch')
         orders = await self.customer_orders(customer,job)
+        duplicate_check = (job.get('payload') or {}).get('duplicate_check')
+        selected = orders[:8]
+        if duplicate_check is not None:
+            duplicate_candidates([], customer, duplicate_check.get('items'), duplicate_check.get('source_date'))
+            selected = [row for row in orders if str(row.get('data','')) >= duplicate_check['source_date']]
+            if len(selected) > 30:
+                raise BridgeFailure('duplicate_scan_too_large')
         details = []
-        for row in orders[:8]:
+        for row in selected:
             detail = await self.read('davs',str(row['codigo']))
             if str(detail.get('cliente')) != customer:
                 raise BridgeFailure('erp_customer_mismatch')
             details.append(order_summary(detail))
-        return {'customer':project(entity,ENTITY_FIELDS),'history_complete':True,
+        result = {'customer':project(entity,ENTITY_FIELDS),'history_complete':True,
             'order_count':len(orders),'orders':details,'configured_branch':self.settings.UNIPLUS_FILIAL,
             'configured_stock_location':self.settings.UNIPLUS_LOCAL_ESTOQUE}
+        if duplicate_check is not None:
+            matches = duplicate_candidates(details, customer, duplicate_check['items'], duplicate_check['source_date'])
+            result['duplicate_check'] = {'complete':True,'candidates':matches,
+                'state':'existing_order_requires_review' if matches else 'no_candidate_found',
+                'issuance_authorized':False}
+        return result
 
     async def catalog(self, job):
         payload = job.get('payload') or {}
@@ -173,7 +227,6 @@ class BridgeWorker:
         except BridgeFailure as error:
             outcome={'state':'blocked','error_code':str(error)}
         except Exception:
-            # Never persist response bodies, credentials or arbitrary exception text.
             outcome={'state':'blocked','error_code':'bridge_read_unavailable'}
         saved = False
         for attempt in range(3):
