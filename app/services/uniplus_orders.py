@@ -54,6 +54,7 @@ class UniplusOrders:
             return
         lease = job['lease']
         counts = {key: 0 for key in ('checked', 'created', 'existing', 'blocked', 'ignored')}
+        blocked_orders = []
         _state['state'] = 'syncing'
         try:
             token = await self.access_token()
@@ -93,17 +94,24 @@ class UniplusOrders:
                         counts['checked'] += 1
                         counts[status] += 1
                         if status == 'blocked':
+                            detail = {
+                                'order_number': number,
+                                'customer_code': str(row.get('cliente') or ''),
+                                'seller_code': str(row.get('vendedor') or ''),
+                                'reason': str(result.get('reason') or 'unknown'),
+                            }
+                            blocked_orders.append(detail)
                             logger.warning(
                                 'Uniplus order blocked order=%s customer=%s seller=%s reason=%s',
-                                number,
-                                str(row.get('cliente') or ''),
-                                str(row.get('vendedor') or ''),
-                                str(result.get('reason') or 'unknown'),
+                                detail['order_number'], detail['customer_code'],
+                                detail['seller_code'], detail['reason'],
                             )
                     if len(rows) < 100:
                         break
                 else:
                     raise SyncFailure('erp_pagination_limit')
+            if blocked_orders:
+                counts['blocked_orders'] = blocked_orders[:20]
             if not (await self.rpc('finish', lease, {'counts': counts}) or {}).get('ok'):
                 raise SyncFailure('lease_expired')
             _state['state'] = 'ready'
