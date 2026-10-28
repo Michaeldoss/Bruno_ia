@@ -92,6 +92,14 @@ class UniplusOrders:
                             raise SyncFailure('import_invalid_response')
                         counts['checked'] += 1
                         counts[status] += 1
+                        if status == 'blocked':
+                            logger.warning(
+                                'Uniplus order blocked order=%s customer=%s seller=%s reason=%s',
+                                number,
+                                str(row.get('cliente') or ''),
+                                str(row.get('vendedor') or ''),
+                                str(result.get('reason') or 'unknown'),
+                            )
                     if len(rows) < 100:
                         break
                 else:
