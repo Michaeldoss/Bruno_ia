@@ -14,6 +14,7 @@ UNIPLUS_CLIENT_SECRET = settings.UNIPLUS_CLIENT_SECRET
 UNIPLUS_FILIAL = settings.UNIPLUS_FILIAL
 UNIPLUS_LOCAL_ESTOQUE = settings.UNIPLUS_LOCAL_ESTOQUE
 UNIPLUS_OS_ENDPOINT = settings.UNIPLUS_OS_ENDPOINT
+UNIPLUS_RECEIVABLES_ENDPOINT = settings.UNIPLUS_RECEIVABLES_ENDPOINT.strip()
 UNIPLUS_STATUS_FINALIZADA = settings.UNIPLUS_STATUS_FINALIZADA
 
 # ---------------------------------------------------------------------------
@@ -391,11 +392,15 @@ async def get_customer_by_cnpj(cnpj_cpf: str) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 async def get_titulos_a_receber(data_vencimento) -> list:
     try:
+        # Never call a placeholder route. The legacy collection service is
+        # intentionally inert until a verified Uniplus endpoint is configured.
+        if not UNIPLUS_RECEIVABLES_ENDPOINT:
+            return []
         hdrs = await _headers()
         data_str = data_vencimento.strftime("%Y-%m-%d") if hasattr(data_vencimento, "strftime") else str(data_vencimento)
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.get(
-                f"{UNIPLUS_BASE_URL}/public-api/v1/ENDPOINT_AINDA_NAO_CONFIRMADO",  # TODO: substituir
+                f"{UNIPLUS_BASE_URL}{UNIPLUS_RECEIVABLES_ENDPOINT}",
                 headers=hdrs,
                 params={"vencimento": data_str, "limit": "100"},
             )
