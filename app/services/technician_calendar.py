@@ -59,18 +59,18 @@ async def _loop():
         return
     async with httpx.AsyncClient() as client:
         while True:
-            delay = 5
+            delay = 15
             try:
                 state = await tick(client, secret)
                 if state in ("sent", "synced", "blocked", "held"):
-                    delay = 1
+                    delay = 3
             except asyncio.CancelledError:
                 raise
             except Exception as error:
                 _state["state"] = "unavailable"
                 # Never log response bodies, URLs containing credentials, or event data.
                 logger.warning("Technician calendar worker failed (%s)", type(error).__name__)
-                delay = 30
+                delay = 60
             await asyncio.sleep(delay)
 
 
