@@ -510,7 +510,7 @@ async def _loop():
                 except Exception as error:
                     _state["state"]="unavailable"
                     logger.warning("[HISTORY STUDY] Queue unavailable (%s)",type(error).__name__)
-                await asyncio.sleep(15)
+                await asyncio.sleep(60)
     except asyncio.CancelledError:raise
     except Exception as error:
         _state.update(state="initialization_failed",reason=type(error).__name__)

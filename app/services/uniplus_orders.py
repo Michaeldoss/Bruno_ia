@@ -144,7 +144,8 @@ async def _loop():
                 _state['state'] = 'unavailable'
                 logger.warning('Uniplus order queue unavailable')
             # Database enforces a 10-second interval across processes/restarts.
-            await asyncio.sleep(1)
+            # Poll at the same cadence instead of hammering the claim RPC every second.
+            await asyncio.sleep(10)
 
 
 def start_uniplus_orders():

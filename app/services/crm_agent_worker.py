@@ -68,7 +68,9 @@ async def _consume(client, secret):
         except Exception as error:
             _state["state"] = "unavailable"
             logger.warning("CRM agent tick failed (%s)", type(error).__name__)
-        await asyncio.sleep(5)
+        # Three consumers used to poll every 5s even while idle. A 15s cadence
+        # keeps lead automation responsive while cutting idle database traffic by ~67%.
+        await asyncio.sleep(15)
 
 
 def start_agent_worker():
