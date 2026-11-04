@@ -112,7 +112,8 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 gate.set()
             await asyncio.wait_for(gate.wait(), timeout=1)
         worker.process = process
-        await worker.tick()
+        processed = await worker.tick()
+        self.assertEqual(processed, 3)
         self.assertEqual(len(started), 3)
 
     async def test_duplicate_reservation_is_not_processed_again(self):
@@ -153,6 +154,13 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                       'data:text/html;base64,AAAA']:
             with self.assertRaises(audio.InvalidAudio):
                 audio.media_source(value, 'https://crm.supabase.co')
+
+
+    async def test_idle_tick_reports_zero_processed_jobs(self):
+        worker = audio.AudioWorker(None, supabase_url='https://crm.supabase.co',
+            service_key='server-key', openai_key='openai-key', organizations=[ORG])
+        worker.claim = AsyncMock(return_value=[])
+        self.assertEqual(await worker.tick(), 0)
 
 
 if __name__ == '__main__':
