@@ -59,12 +59,12 @@ class AgentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(worker.agent_worker_status()["verification_code"],"model_429_insufficient_quota")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
     async def test_default_configuration_uses_single_agent_consumer(self):
         settings = Settings(_env_file=None)
         self.assertEqual(settings.CRM_AGENT_CONSUMERS, 1)
         self.assertGreaterEqual(settings.CRM_AGENT_CONSUMERS, 1)
         self.assertLessEqual(settings.CRM_AGENT_CONSUMERS, 3)
+
+
+if __name__ == "__main__":
+    unittest.main()
