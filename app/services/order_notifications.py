@@ -42,7 +42,9 @@ async def _loop():
             except Exception as error:
                 _state["state"] = "unavailable"
                 logger.warning("Order notification tick failed (%s)", type(error).__name__)
-            await asyncio.sleep(3)
+            # Operational notices do not need sub-5-second polling. The database
+            # remains the delivery fence; a 10s cadence avoids constant idle claims.
+            await asyncio.sleep(10)
 
 
 def start_order_notifications():
