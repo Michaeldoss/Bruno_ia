@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     UNIPLUS_FILIAL: str = "2"
     UNIPLUS_LOCAL_ESTOQUE: str = "2"
     UNIPLUS_OS_ENDPOINT: str = "/public-api/v1/ordem-servico"
+    # Leave empty until Uniplus confirms the public receivables endpoint.
+    # The legacy Bruno collection worker stays disabled while this is empty.
+    UNIPLUS_RECEIVABLES_ENDPOINT: str = ""
     UNIPLUS_STATUS_FINALIZADA: str = "3"
 
     # Supabase (Doss CRM) — usado apenas pela Pesquisa de Satisfação,
