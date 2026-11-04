@@ -221,11 +221,14 @@ class AudioWorker:
                     await asyncio.sleep(2 ** attempt)
 
     async def tick(self):
+        processed = 0
         for org_id in self.organizations:
             jobs = await self.claim(org_id)
             if jobs:
+                processed += len(jobs)
                 await asyncio.gather(*(self.process(org_id, job) for job in jobs))
         _state["state"] = "running"
+        return processed
 
 
 async def _loop():
@@ -244,17 +247,23 @@ async def _loop():
             service_key=keys[0], openai_key=keys[1],
             organizations=[value.strip() for value in organizations if value.strip()], usage=registrar_uso_whisper)
         while True:
+            delay = 15
             try:
-                await worker.tick()
+                processed = await worker.tick()
                 _state.pop('last_error', None)
+                # When work exists, immediately drain the next batch. When the
+                # queue is empty, back off to reduce PostgREST load.
+                delay = 1 if processed else 15
             except httpx.HTTPStatusError as exc:
                 _state['state'] = 'retrying'
                 _state['last_error'] = 'database_http_' + str(exc.response.status_code)
                 logger.warning('[CRM AUDIO] Database HTTP %s', exc.response.status_code)
+                delay = 15
             except Exception:
                 _state["state"] = "retrying"
                 logger.warning("[CRM AUDIO] Queue unavailable; retrying without sending messages")
-            await asyncio.sleep(5)
+                delay = 15
+            await asyncio.sleep(delay)
 
 
 def start_audio_worker():
