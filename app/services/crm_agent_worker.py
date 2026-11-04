@@ -30,14 +30,17 @@ async def tick(client, secret):
 
 async def _loop():
     from app.config import get_settings
-    secret = get_settings().SUPABASE_SERVICE_ROLE_KEY
+    settings = get_settings()
+    secret = settings.SUPABASE_SERVICE_ROLE_KEY
+    consumer_count = max(1, min(int(settings.CRM_AGENT_CONSUMERS), 3))
+    _state["consumer_count"] = consumer_count
     if not secret or secret == "stub":
         _state["state"] = "configuration_required"
         return
     async with httpx.AsyncClient() as client:
         while not await verify_model(client, secret):
             await asyncio.sleep(30)
-        await asyncio.gather(*(_consume(client, secret) for _ in range(3)))
+        await asyncio.gather(*(_consume(client, secret) for _ in range(consumer_count)))
 
 
 async def verify_model(client, secret):
