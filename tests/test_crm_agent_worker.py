@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import httpx
 from app.services import crm_agent_worker as worker
+from app.config import Settings
 
 
 class AgentWorkerTests(unittest.IsolatedAsyncioTestCase):
@@ -56,6 +57,13 @@ class AgentWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await worker.verify_model(client,"test-secret"))
         self.assertFalse(worker.agent_worker_status()["model_verified"])
         self.assertEqual(worker.agent_worker_status()["verification_code"],"model_429_insufficient_quota")
+
+
+    async def test_default_configuration_uses_single_agent_consumer(self):
+        settings = Settings(_env_file=None)
+        self.assertEqual(settings.CRM_AGENT_CONSUMERS, 1)
+        self.assertGreaterEqual(settings.CRM_AGENT_CONSUMERS, 1)
+        self.assertLessEqual(settings.CRM_AGENT_CONSUMERS, 3)
 
 
 if __name__ == "__main__":

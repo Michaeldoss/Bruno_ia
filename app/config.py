@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     DOSS_CRM_LEADS_URL: str = "https://doss-crm.vercel.app/api/leads/create"
     BRUNO_API_KEY: str = ""
 
+    # Native CRM worker concurrency. One consumer is enough for the current
+    # queue volume; raise explicitly only if agent jobs begin to backlog.
+    CRM_AGENT_CONSUMERS: int = 1
+
     ENVIRONMENT: str = "development"
 
     class Config:

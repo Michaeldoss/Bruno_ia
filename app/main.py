@@ -13,6 +13,7 @@ from app.services.crm_agent_worker import start_agent_worker, stop_agent_worker,
 from app.services.order_notifications import start_order_notifications, stop_order_notifications, order_notifications_status
 from app.services.uniplus_orders import start_uniplus_orders, stop_uniplus_orders, uniplus_orders_status
 from app.services.history_study import start_history_study, stop_history_study, history_study_status
+from app.services.runtime_guard import is_pull_request_preview
 from app.models.database import SessionLocal, Conversation, Lead, LeadState, UsageLog
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -25,6 +26,12 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Render previews inherit base-service environment variables. They must
+    # serve HTTP for QA without starting production background workers.
+    if is_pull_request_preview():
+        yield
+        return
+
     start_followup_service()
     start_satisfacao_service()
     start_cobranca_service()
