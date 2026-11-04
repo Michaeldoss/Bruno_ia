@@ -234,10 +234,23 @@ async def _loop_cobranca():
 _cobranca_task: asyncio.Task = None
 
 
+def _legacy_collection_ready() -> bool:
+    endpoint = str(getattr(settings, "UNIPLUS_RECEIVABLES_ENDPOINT", "") or "").strip()
+    templates_ready = all(
+        isinstance(value, str) and value and "PREENCHER" not in value
+        for value in TEMPLATE_CONTENT_SIDS.values()
+    )
+    return bool(endpoint and templates_ready)
+
+
 def start_cobranca_service():
     global _cobranca_task
-    _cobranca_task = asyncio.create_task(_loop_cobranca())
-    logger.info("[COBRANCA] Task iniciada com sucesso.")
+    if not _legacy_collection_ready():
+        logger.info("[COBRANCA] Serviço legado não iniciado: endpoint/templates ainda não validados; use o módulo Cobranças do CRM.")
+        return
+    if _cobranca_task is None or _cobranca_task.done():
+        _cobranca_task = asyncio.create_task(_loop_cobranca())
+        logger.info("[COBRANCA] Task iniciada com sucesso.")
 
 
 class FinanceService:
