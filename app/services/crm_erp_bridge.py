@@ -252,13 +252,13 @@ async def _loop():
         while True:
             try:
                 await worker.tick()
-                pause=5
+                pause=20
             except asyncio.CancelledError:
                 raise
             except Exception:
                 _state['state']='unavailable'
                 logger.warning('ERP bridge unavailable; no unconfirmed write retried')
-                pause=30
+                pause=60
             await asyncio.sleep(pause)
 
 
