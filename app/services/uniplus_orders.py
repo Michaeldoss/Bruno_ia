@@ -73,6 +73,8 @@ class UniplusOrders:
                     rows = response.json()
                     if not isinstance(rows, list):
                         raise SyncFailure('erp_invalid_response')
+                    batch = []
+                    batch_rows = []
                     for row in rows:
                         # Validate date locally even if the ERP ignores filters.
                         if not isinstance(row, dict) or row.get('data') != day:
@@ -84,28 +86,34 @@ class UniplusOrders:
                             continue
                         seen.add(number)
                         # Do not transmit products, values, notes or arbitrary ERP fields.
-                        dav = {key: row.get(key) for key in ('codigo', 'cliente', 'tipoDocumento', 'status', 'cnpjCpfCliente', 'vendedor', 'data', 'filial')}
-                        result = await self.rpc('import', lease, {'dav': dav})
-                        if not result:
-                            raise SyncFailure('lease_expired')
-                        status = result.get('status')
-                        if status not in counts or status == 'checked':
-                            raise SyncFailure('import_invalid_response')
-                        counts['checked'] += 1
-                        counts[status] += 1
-                        if status == 'blocked':
-                            detail = {
-                                'order_number': number,
-                                'customer_code': str(row.get('cliente') or ''),
-                                'seller_code': str(row.get('vendedor') or ''),
-                                'reason': str(result.get('reason') or 'unknown'),
-                            }
-                            blocked_orders.append(detail)
-                            logger.warning(
-                                'Uniplus order blocked order=%s customer=%s seller=%s reason=%s',
-                                detail['order_number'], detail['customer_code'],
-                                detail['seller_code'], detail['reason'],
-                            )
+                        batch.append({key: row.get(key) for key in ('codigo', 'cliente', 'tipoDocumento', 'status', 'cnpjCpfCliente', 'vendedor', 'data', 'filial')})
+                        batch_rows.append(row)
+
+                    if batch:
+                        results = await self.rpc('import_batch', lease, {'davs': batch})
+                        if not isinstance(results, list) or len(results) != len(batch):
+                            raise SyncFailure('import_batch_invalid_response')
+                        for row, result in zip(batch_rows, results):
+                            if not isinstance(result, dict):
+                                raise SyncFailure('import_invalid_response')
+                            status = result.get('status')
+                            if status not in counts or status == 'checked':
+                                raise SyncFailure('import_invalid_response')
+                            counts['checked'] += 1
+                            counts[status] += 1
+                            if status == 'blocked':
+                                detail = {
+                                    'order_number': str(row.get('codigo') or ''),
+                                    'customer_code': str(row.get('cliente') or ''),
+                                    'seller_code': str(row.get('vendedor') or ''),
+                                    'reason': str(result.get('reason') or 'unknown'),
+                                }
+                                blocked_orders.append(detail)
+                                logger.warning(
+                                    'Uniplus order blocked order=%s customer=%s seller=%s reason=%s',
+                                    detail['order_number'], detail['customer_code'],
+                                    detail['seller_code'], detail['reason'],
+                                )
                     if len(rows) < 100:
                         break
                 else:

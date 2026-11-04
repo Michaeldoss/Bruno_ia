@@ -36,6 +36,10 @@ class UniplusOrderTests(unittest.IsolatedAsyncioTestCase):
                 if op == 'import':
                     self.imports.append(body['p_data']['dav'])
                     return httpx.Response(200, json={'status': 'created'})
+                if op == 'import_batch':
+                    davs = body['p_data']['davs']
+                    self.imports.extend(davs)
+                    return httpx.Response(200, json=[{'status': 'created'} for _ in davs])
                 if op == 'finish':
                     self.finishes.append(body['p_data'])
                     return httpx.Response(200, json={'ok': True})
@@ -60,6 +64,14 @@ class UniplusOrderTests(unittest.IsolatedAsyncioTestCase):
         await self.worker.tick()
         self.assertEqual(len(self.imports), 1)
         self.assertEqual(self.imports[0]['codigo'], 10510)
+        self.assertEqual(
+            sum(json.loads(r.content).get('p_operation') == 'import_batch' for r in self.requests if r.url.host == 'db.example'),
+            1,
+        )
+        self.assertEqual(
+            sum(json.loads(r.content).get('p_operation') == 'import' for r in self.requests if r.url.host == 'db.example'),
+            0,
+        )
         self.assertNotIn('observacao', self.imports[0])
         self.assertEqual(self.finishes[-1], {'counts': {'checked': 1, 'created': 1, 'existing': 0, 'blocked': 0, 'ignored': 0}})
 
