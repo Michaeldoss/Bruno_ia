@@ -119,6 +119,52 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
             await self.worker.read('venda','99')
         self.assertEqual(self.calls,[])
 
+    async def test_purchase_headers_do_not_load_sale_items(self):
+        self.job['payload']={'purchase_history_headers':True,'purchase_history_limit':2}
+        def handler(r):
+            if r.url.path=='/public-api/v2/venda':
+                return httpx.Response(200,json=[
+                    {'idVenda':2,'documento':'003288','codigoCliente':'9001','emissao':'2024-11-28','valorTotal':2480},
+                    {'idVenda':1,'documento':'002880','codigoCliente':'9001','emissao':'2024-08-08','valorTotal':1800},
+                ])
+            if r.url.path=='/public-api/v2/venda-item':
+                raise AssertionError('headers must not load sale items')
+            return None
+        self.override=handler
+        await self.worker.tick()
+        outcome=self.outcomes[-1]
+        self.assertEqual(outcome['state'],'succeeded')
+        history=outcome['result']['purchase_history_headers']
+        self.assertEqual(history['source'],'uniplus_v2_sales_headers')
+        self.assertEqual(history['sales_total'],2)
+        self.assertEqual(history['sales_returned'],2)
+        self.assertNotIn('items',history['sales'][0])
+
+    async def test_purchase_sale_items_load_only_requested_sale(self):
+        self.job['payload']={'purchase_sale_items':True,'purchase_sale_id':'2'}
+        def handler(r):
+            if r.url.path=='/public-api/v2/venda-item':
+                self.assertEqual(r.url.params['codigoCliente.eq'],'9001')
+                self.assertEqual(r.url.params['idVenda.eq'],'2')
+                return httpx.Response(200,json=[
+                    {'idVenda':2,'iditem':1,'documento':'003288','modelo':'55','codigoCliente':'9001',
+                     'codigoProduto':'8360','descricaoProduto':'DESLOCAMENTO','codigoUnidadeMedida':'UN',
+                     'quantidade':1,'precoUnitario':100,'desconto':0,'total':100},
+                    {'idVenda':2,'iditem':2,'documento':'003288','modelo':'55','codigoCliente':'9001',
+                     'codigoProduto':'8357','descricaoProduto':'MANUTENCAO','codigoUnidadeMedida':'UN',
+                     'quantidade':1,'precoUnitario':650,'desconto':0,'total':650},
+                ])
+            return None
+        self.override=handler
+        await self.worker.tick()
+        outcome=self.outcomes[-1]
+        self.assertEqual(outcome['state'],'succeeded')
+        result=outcome['result']['purchase_sale_items']
+        self.assertEqual(result['source'],'uniplus_v2_sale_items')
+        self.assertEqual(result['sale_id'],'2')
+        self.assertEqual(result['item_count'],2)
+        self.assertEqual(result['items'][0]['iditem'],1)
+
     async def test_fiscal_purchase_history_returns_sales_and_product_rows(self):
         self.job['payload']={'purchase_history':True,'purchase_history_limit':2}
         def handler(r):
