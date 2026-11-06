@@ -117,6 +117,60 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
             await self.worker.read('venda','99')
         self.assertEqual(self.calls,[])
 
+    async def test_fiscal_purchase_history_returns_sales_and_product_rows(self):
+        self.job['payload']={'purchase_history':True,'purchase_history_limit':2}
+        def handler(r):
+            if r.url.path=='/public-api/v2/venda':
+                return httpx.Response(200,json=[
+                    {'idVenda':2,'documento':'003288','codigoCliente':'9001','emissao':'2024-11-28',
+                     'dataHoraEmissao':'2024-11-28T10:00:00','codigoFilial':'1','status':1,
+                     'nomeCliente':'Cliente','nomeVendedor':'Venda','valorProdutos':2480,'desconto':0,'valorTotal':2480},
+                    {'idVenda':1,'documento':'002880','codigoCliente':'9001','emissao':'2024-08-08',
+                     'dataHoraEmissao':'2024-08-08T10:00:00','codigoFilial':'1','status':1,
+                     'nomeCliente':'Cliente','nomeVendedor':'Venda','valorProdutos':1800,'desconto':100,'valorTotal':1800},
+                ])
+            if r.url.path=='/public-api/v2/venda-item':
+                return httpx.Response(200,json=[
+                    {'idVenda':2,'iditem':1,'documento':'003288','modelo':'55','codigoCliente':'9001',
+                     'emissao':'2024-11-28','dataHoraEmissao':'2024-11-28T10:00:00',
+                     'codigoProduto':'8360','descricaoProduto':'DESLOCAMENTO','codigoUnidadeMedida':'UN',
+                     'quantidade':1220,'precoUnitario':1.5,'desconto':0,'total':1830,'valorTotal':1830,
+                     'condicaoPagamento':'2','frete':0,'status':1,'tipoItem':1,'codigoFilial':'1'},
+                    {'idVenda':2,'iditem':2,'documento':'003288','modelo':'55','codigoCliente':'9001',
+                     'emissao':'2024-11-28','dataHoraEmissao':'2024-11-28T10:00:00',
+                     'codigoProduto':'8357','descricaoProduto':'MANUTENCAO','codigoUnidadeMedida':'UN',
+                     'quantidade':1,'precoUnitario':650,'desconto':0,'total':650,'valorTotal':650,
+                     'condicaoPagamento':'2','frete':0,'status':1,'tipoItem':1,'codigoFilial':'1'},
+                    {'idVenda':1,'iditem':1,'documento':'002880','modelo':'55','codigoCliente':'9001',
+                     'emissao':'2024-08-08','dataHoraEmissao':'2024-08-08T10:00:00',
+                     'codigoProduto':'221988','descricaoProduto':'TINTA DG DTF 1LT - WHITE',
+                     'codigoUnidadeMedida':'LT','quantidade':5,'precoUnitario':380,'desconto':100,
+                     'total':1800,'valorTotal':1800,'condicaoPagamento':'4','frete':78,'status':1,
+                     'tipoItem':1,'codigoFilial':'1'},
+                ])
+            return None
+        self.override=handler
+        await self.worker.tick()
+        outcome=self.outcomes[-1]
+        self.assertEqual(outcome['state'],'succeeded')
+        result=outcome['result']
+        history=result['purchase_history']
+        self.assertEqual(history['source'],'uniplus_v2_venda')
+        self.assertEqual(history['sales_total'],2)
+        self.assertEqual(history['sales_returned'],2)
+        self.assertFalse(history['sales_truncated'])
+        self.assertEqual(history['items_total_for_returned_sales'],3)
+        self.assertEqual(history['sales'][0]['documento'],'003288')
+        self.assertEqual(len(history['sales'][0]['items']),2)
+        self.assertEqual(history['items'][0]['codigoProduto'],'8357')
+        self.assertTrue(result['history_complete'])
+        self.assertTrue(all(r.method=='GET' for r in self.erp_calls()))
+
+    async def test_fiscal_purchase_history_limit_is_bounded(self):
+        self.job['payload']={'purchase_history':True,'purchase_history_limit':201}
+        await self.worker.tick()
+        self.assertEqual(self.outcomes[-1]['error_code'],'invalid_purchase_history_limit')
+
     async def test_empty_queue_does_not_contact_erp(self):
         self.claimed=True;await self.worker.tick();self.assertEqual(self.erp_calls(),[])
     async def test_issue_is_closed(self):
