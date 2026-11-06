@@ -417,6 +417,129 @@ async def get_titulos_a_receber(data_vencimento) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Histórico fiscal de compras para o Doss CRM (somente leitura)
+# ---------------------------------------------------------------------------
+_SALE_FIELDS = (
+    "idVenda","documento","pdv","codigoCliente","nomeCliente","emissao",
+    "dataHoraEmissao","codigoFilial","status","nomeVendedor","valorProdutos",
+    "desconto","valorTotal","chaveAcesso",
+)
+_SALE_ITEM_FIELDS = (
+    "idVenda","iditem","documento","modelo","pdv","codigoCliente","nomeCliente",
+    "codigoVendedor","nomeVendedor","emissao","dataHoraEmissao","codigoProduto",
+    "descricaoProduto","codigoUnidadeMedida","quantidade","precoUnitario","desconto",
+    "total","valorProdutos","valorTotal","condicaoPagamento","frete","seguro",
+    "outrasDespesas","status","tipoItem","codigoFilial","cfop",
+)
+
+def _numeric_erp_code(value: str) -> str:
+    code = str(value or "").strip()
+    if not code.isdigit() or len(code) > 20:
+        raise ValueError("invalid_erp_code")
+    return code
+
+def _project_erp(row: Dict[str, Any], fields) -> Dict[str, Any]:
+    return {key: row.get(key) for key in fields if key in row}
+
+async def list_customer_sales_headers(customer_code: str, limit: int = 40) -> Dict[str, Any]:
+    customer = _numeric_erp_code(customer_code)
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("invalid_history_limit")
+
+    hdrs = await _headers()
+    rows_by_id: Dict[str, Dict[str, Any]] = {}
+    async with httpx.AsyncClient(timeout=12) as client:
+        for offset in range(0, 5000, 100):
+            response = await client.get(
+                f"{UNIPLUS_BASE_URL}/public-api/v2/venda",
+                headers=hdrs,
+                params={"codigoCliente.eq": customer, "limit": "100", "offset": str(offset)},
+            )
+            response.raise_for_status()
+            rows = response.json()
+            if not isinstance(rows, list):
+                raise RuntimeError("erp_sales_list_invalid")
+            for row in rows:
+                if not isinstance(row, dict) or str(row.get("codigoCliente")) != customer:
+                    raise RuntimeError("erp_customer_filter_not_honored")
+                sale_id = str(row.get("idVenda") or "")
+                if not sale_id.isdigit():
+                    raise RuntimeError("erp_sale_id_missing")
+                if sale_id in rows_by_id:
+                    raise RuntimeError("erp_pagination_repeated")
+                rows_by_id[sale_id] = _project_erp(row, _SALE_FIELDS)
+            if len(rows) < 100:
+                break
+        else:
+            raise RuntimeError("erp_pagination_limit")
+
+    sales = list(rows_by_id.values())
+    sales.sort(
+        key=lambda row: (
+            str(row.get("dataHoraEmissao") or row.get("emissao") or ""),
+            int(row.get("idVenda") or 0),
+        ),
+        reverse=True,
+    )
+    selected = sales[:limit]
+    return {
+        "sales_total": len(sales),
+        "sales_returned": len(selected),
+        "sales_truncated": len(selected) < len(sales),
+        "sales": selected,
+        "source": "uniplus_direct_v2_sales_headers",
+    }
+
+async def list_customer_sale_items(customer_code: str, sale_id: str) -> Dict[str, Any]:
+    customer = _numeric_erp_code(customer_code)
+    sale = _numeric_erp_code(sale_id)
+    hdrs = await _headers()
+    rows_by_key: Dict[str, Dict[str, Any]] = {}
+
+    async with httpx.AsyncClient(timeout=12) as client:
+        for offset in range(0, 500, 100):
+            response = await client.get(
+                f"{UNIPLUS_BASE_URL}/public-api/v2/venda-item",
+                headers=hdrs,
+                params={
+                    "codigoCliente.eq": customer,
+                    "idVenda.eq": sale,
+                    "limit": "100",
+                    "offset": str(offset),
+                },
+            )
+            response.raise_for_status()
+            rows = response.json()
+            if not isinstance(rows, list):
+                raise RuntimeError("erp_sale_items_invalid")
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise RuntimeError("erp_object_invalid")
+                if str(row.get("codigoCliente")) != customer or str(row.get("idVenda")) != sale:
+                    raise RuntimeError("erp_sale_item_filter_not_honored")
+                item_id = str(row.get("iditem") or "")
+                if not item_id.isdigit():
+                    raise RuntimeError("erp_sale_item_id_missing")
+                key = f"{sale}:{item_id}"
+                if key in rows_by_key:
+                    raise RuntimeError("erp_pagination_repeated")
+                rows_by_key[key] = _project_erp(row, _SALE_ITEM_FIELDS)
+            if len(rows) < 100:
+                break
+        else:
+            raise RuntimeError("erp_sale_item_pagination_limit")
+
+    items = list(rows_by_key.values())
+    items.sort(key=lambda row: int(row.get("iditem") or 0))
+    return {
+        "sale_id": sale,
+        "item_count": len(items),
+        "items": items,
+        "source": "uniplus_direct_v2_sale_items",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Instância compatível com o código atual do Bruno
 # ---------------------------------------------------------------------------
 class UniplusService:
