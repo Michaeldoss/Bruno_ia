@@ -20,6 +20,14 @@ ENTITY_FIELDS = ('codigo','nome','razaoSocial','tipo','inativo','creditoRestrito
 ORDER_FIELDS = ('codigo','cliente','tipoDocumento','status','data','vendedor','filial','condicaoPagamento','tipoDocumentoFinanceiro','codigoTransportadora','codigoTipoFrete','valor','valorFrete','desconto','percentualDescontoSubtotal','valorDescontoItens','codigoECommerce','cepEntrega','itens')
 ITEM_FIELDS = ('produto','nomeProduto','descricao','quantidade','precoUnitario','precoTotal','desconto','isBrinde','codigoUnidadeMedida')
 PRODUCT_FIELDS = ('codigo','nome','inativo','unidadeMedida','preco','pesoBruto','pesoLiquido','codigoGrupoProduto')
+READ_RESOURCE_VERSIONS = {
+    'entidades':'v1',
+    'davs':'v1',
+    'produtos':'v1',
+    'saldo-estoque':'v1',
+    'venda':'v2',
+    'venda-item':'v2',
+}
 
 
 class BridgeFailure(RuntimeError):
@@ -118,10 +126,13 @@ class BridgeWorker:
         return response.json() if response.content else None
 
     async def read(self, resource, key=None, params=None):
-        # Not a generic proxy: no caller-supplied URL, path traversal or verbs.
-        if resource not in ('entidades','davs','produtos','saldo-estoque'):
+        # Not a generic proxy: every readable ERP route is explicitly allowlisted.
+        version = READ_RESOURCE_VERSIONS.get(resource)
+        if version is None:
             raise BridgeFailure('resource_not_allowed')
-        path = '/public-api/v1/' + resource + ('/'+code(key) if key is not None else '')
+        if resource in ('venda','venda-item') and key is not None:
+            raise BridgeFailure('resource_key_not_allowed')
+        path = '/public-api/' + version + '/' + resource + ('/'+code(key) if key is not None else '')
         token = await self.access_token()
         response = await self.client.get(ERP_ORIGIN+path, params=params,
             headers={'Authorization':'Bearer '+token,'Accept':'application/json'},
@@ -132,6 +143,24 @@ class BridgeWorker:
             return response.json()
         except ValueError:
             raise BridgeFailure('erp_read_invalid_json') from None
+
+    async def sales_schema_probe(self, customer):
+        # Schema-only diagnostic for the documented Uniplus v2 sales endpoints.
+        # Values are intentionally not returned: this is used only to map the
+        # current installation safely before exposing a purchase-history contract.
+        params = {'codigoCliente.eq':customer,'limit':1,'offset':0}
+        sales = await self.read('venda', params=params)
+        items = await self.read('venda-item', params=params)
+        if not isinstance(sales,list) or not isinstance(items,list):
+            raise BridgeFailure('erp_sales_list_invalid')
+        sale_fields = sorted(sales[0].keys()) if sales and isinstance(sales[0],dict) else []
+        item_fields = sorted(items[0].keys()) if items and isinstance(items[0],dict) else []
+        return {
+            'sales_sample_count':len(sales),
+            'sale_fields':sale_fields,
+            'item_sample_count':len(items),
+            'item_fields':item_fields,
+        }
 
     async def customer_orders(self, customer, job):
         rows_by_code = {}
@@ -157,8 +186,16 @@ class BridgeWorker:
         entity = await self.read('entidades',customer)
         if str(entity.get('codigo')) != customer:
             raise BridgeFailure('erp_customer_mismatch')
-        orders = await self.customer_orders(customer,job)
         payload = job.get('payload') or {}
+        if payload.get('sales_schema_probe') is True:
+            schema = await self.sales_schema_probe(customer)
+            return {
+                'customer':project(entity,ENTITY_FIELDS),
+                'sales_schema':schema,
+                'history_complete':False,
+                'schema_probe':True,
+            }
+        orders = await self.customer_orders(customer,job)
         duplicate_check = payload.get('duplicate_check')
         history_limit = payload.get('history_limit')
         if history_limit is None:

@@ -83,6 +83,40 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
         await self.worker.tick()
         self.assertEqual(self.outcomes[-1]['error_code'],'invalid_history_limit')
 
+    async def test_sales_schema_probe_uses_documented_v2_routes_without_returning_values(self):
+        self.job['payload']={'sales_schema_probe':True}
+        def handler(r):
+            if r.url.path=='/public-api/v2/venda':
+                self.assertEqual(r.url.params['codigoCliente.eq'],'9001')
+                return httpx.Response(200,json=[{
+                    'idVenda':99,'documento':'000123','codigoCliente':'9001',
+                    'emissao':'2026-11-06','status':1
+                }])
+            if r.url.path=='/public-api/v2/venda-item':
+                self.assertEqual(r.url.params['codigoCliente.eq'],'9001')
+                return httpx.Response(200,json=[{
+                    'idVenda':99,'idItem':1,'codigoCliente':'9001',
+                    'codigoProduto':'7','quantidade':2,'precoUnitario':50
+                }])
+            return None
+        self.override=handler
+        await self.worker.tick()
+        outcome=self.outcomes[-1]
+        self.assertEqual(outcome['state'],'succeeded')
+        result=outcome['result']
+        self.assertTrue(result['schema_probe'])
+        self.assertFalse(result['history_complete'])
+        self.assertEqual(result['sales_schema']['sale_fields'],
+            ['codigoCliente','documento','emissao','idVenda','status'])
+        self.assertEqual(result['sales_schema']['item_fields'],
+            ['codigoCliente','codigoProduto','idItem','idVenda','precoUnitario','quantidade'])
+        self.assertNotIn('000123',json.dumps(result))
+
+    async def test_v2_sales_resources_do_not_accept_path_keys(self):
+        with self.assertRaises(BridgeFailure):
+            await self.worker.read('venda','99')
+        self.assertEqual(self.calls,[])
+
     async def test_empty_queue_does_not_contact_erp(self):
         self.claimed=True;await self.worker.tick();self.assertEqual(self.erp_calls(),[])
     async def test_issue_is_closed(self):
