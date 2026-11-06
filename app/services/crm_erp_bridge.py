@@ -158,21 +158,33 @@ class BridgeWorker:
         if str(entity.get('codigo')) != customer:
             raise BridgeFailure('erp_customer_mismatch')
         orders = await self.customer_orders(customer,job)
-        duplicate_check = (job.get('payload') or {}).get('duplicate_check')
-        selected = orders[:8]
+        payload = job.get('payload') or {}
+        duplicate_check = payload.get('duplicate_check')
+        history_limit = payload.get('history_limit')
+        if history_limit is None:
+            selected = orders[:8]
+        else:
+            if type(history_limit) is not int or not 1 <= history_limit <= 40:
+                raise BridgeFailure('invalid_history_limit')
+            selected = orders[:history_limit]
         if duplicate_check is not None:
             duplicate_candidates([], customer, duplicate_check.get('items'), duplicate_check.get('source_date'))
             selected = [row for row in orders if str(row.get('data','')) >= duplicate_check['source_date']]
             if len(selected) > 30:
                 raise BridgeFailure('duplicate_scan_too_large')
         details = []
-        for row in selected:
+        for index,row in enumerate(selected):
+            if index and index % 10 == 0:
+                if not (await self.rpc('heartbeat',job) or {}).get('ok'):
+                    raise BridgeFailure('lease_lost')
             detail = await self.read('davs',str(row['codigo']))
             if str(detail.get('cliente')) != customer:
                 raise BridgeFailure('erp_customer_mismatch')
             details.append(order_summary(detail))
         result = {'customer':project(entity,ENTITY_FIELDS),'history_complete':True,
-            'order_count':len(orders),'orders':details,'configured_branch':self.settings.UNIPLUS_FILIAL,
+            'order_count':len(orders),'orders_returned':len(details),
+            'orders_truncated':len(details) < len(orders),'orders':details,
+            'configured_branch':self.settings.UNIPLUS_FILIAL,
             'configured_stock_location':self.settings.UNIPLUS_LOCAL_ESTOQUE}
         if duplicate_check is not None:
             matches = duplicate_candidates(details, customer, duplicate_check['items'], duplicate_check['source_date'])
