@@ -55,6 +55,34 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('secret',outcome['result']['customer'])
         self.assertTrue(all(r.method=='GET' for r in self.erp_calls()))
         self.assertTrue(all(r.headers['authorization']=='Bearer test-erp-token' for r in self.erp_calls()))
+    async def test_purchase_history_limit_returns_bounded_order_details(self):
+        self.job['payload']={'history_limit':12}
+        def handler(r):
+            if r.url.path=='/public-api/v1/davs':
+                return httpx.Response(200,json=[
+                    {'codigo':str(100+i),'cliente':'9001','data':'2026-10-%02d'%(20-i)}
+                    for i in range(12)
+                ])
+            if r.url.path.startswith('/public-api/v1/davs/'):
+                number=r.url.path.rsplit('/',1)[-1]
+                return httpx.Response(200,json={
+                    'codigo':number,'cliente':'9001','data':'2026-10-20',
+                    'valor':100,'itens':[{'produto':'7','descricao':'Ink','quantidade':2,'precoUnitario':50,'precoTotal':100}]
+                })
+            return None
+        self.override=handler
+        await self.worker.tick()
+        result=self.outcomes[-1]['result']
+        self.assertEqual(result['order_count'],12)
+        self.assertEqual(result['orders_returned'],12)
+        self.assertFalse(result['orders_truncated'])
+        self.assertEqual(len(result['orders']),12)
+
+    async def test_purchase_history_limit_is_bounded(self):
+        self.job['payload']={'history_limit':41}
+        await self.worker.tick()
+        self.assertEqual(self.outcomes[-1]['error_code'],'invalid_history_limit')
+
     async def test_empty_queue_does_not_contact_erp(self):
         self.claimed=True;await self.worker.tick();self.assertEqual(self.erp_calls(),[])
     async def test_issue_is_closed(self):
