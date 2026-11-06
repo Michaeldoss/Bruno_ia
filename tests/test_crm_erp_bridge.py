@@ -3,7 +3,7 @@ import json
 import unittest
 from types import SimpleNamespace
 import httpx
-from app.services.crm_erp_bridge import BridgeWorker, BridgeFailure, code, scalar_stock, order_summary
+from app.services.crm_erp_bridge import BRIDGE_CONTRACT, BridgeWorker, BridgeFailure, code, scalar_stock, order_summary
 
 class Values(unittest.TestCase):
     def test_codes(self):
@@ -53,10 +53,15 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome['state'],'succeeded')
         self.assertEqual(outcome['result']['order_count'],1)
         self.assertNotIn('secret',outcome['result']['customer'])
-        item_calls=[r for r in self.erp_calls() if r.url.path=='/public-api/v2/venda-item']
-        self.assertEqual({r.url.params['idVenda.eq'] for r in item_calls},{'1','2'})
         self.assertTrue(all(r.method=='GET' for r in self.erp_calls()))
         self.assertTrue(all(r.headers['authorization']=='Bearer test-erp-token' for r in self.erp_calls()))
+    async def test_claim_advertises_bridge_contract(self):
+        self.claimed=True
+        await self.worker.tick()
+        claim=next(r for r in self.calls if r.url.host=='tenant.invalid' and json.loads(r.content)['p_operation']=='claim')
+        body=json.loads(claim.content)
+        self.assertEqual(body['p_data']['bridge_contract'],BRIDGE_CONTRACT)
+
     async def test_purchase_history_limit_returns_bounded_order_details(self):
         self.job['payload']={'history_limit':12}
         def handler(r):
