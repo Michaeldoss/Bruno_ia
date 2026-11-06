@@ -20,6 +20,8 @@ ENTITY_FIELDS = ('codigo','nome','razaoSocial','tipo','inativo','creditoRestrito
 ORDER_FIELDS = ('codigo','cliente','tipoDocumento','status','data','vendedor','filial','condicaoPagamento','tipoDocumentoFinanceiro','codigoTransportadora','codigoTipoFrete','valor','valorFrete','desconto','percentualDescontoSubtotal','valorDescontoItens','codigoECommerce','cepEntrega','itens')
 ITEM_FIELDS = ('produto','nomeProduto','descricao','quantidade','precoUnitario','precoTotal','desconto','isBrinde','codigoUnidadeMedida')
 PRODUCT_FIELDS = ('codigo','nome','inativo','unidadeMedida','preco','pesoBruto','pesoLiquido','codigoGrupoProduto')
+SALE_FIELDS = ('idVenda','documento','pdv','codigoCliente','nomeCliente','emissao','dataHoraEmissao','codigoFilial','status','nomeVendedor','valorProdutos','desconto','valorTotal','chaveAcesso')
+SALE_ITEM_FIELDS = ('idVenda','iditem','documento','modelo','pdv','codigoCliente','nomeCliente','codigoVendedor','nomeVendedor','emissao','dataHoraEmissao','codigoProduto','descricaoProduto','codigoUnidadeMedida','quantidade','precoUnitario','desconto','total','valorProdutos','valorTotal','condicaoPagamento','frete','seguro','outrasDespesas','status','tipoItem','codigoFilial','cfop')
 READ_RESOURCE_VERSIONS = {
     'entidades':'v1',
     'davs':'v1',
@@ -162,6 +164,92 @@ class BridgeWorker:
             'item_fields':item_fields,
         }
 
+    async def customer_sales_rows(self, resource, customer, job):
+        rows_by_key = {}
+        for offset in range(0,5000,100):
+            if not (await self.rpc('heartbeat',job) or {}).get('ok'):
+                raise BridgeFailure('lease_lost')
+            rows = await self.read(resource,params={
+                'codigoCliente.eq':customer,
+                'limit':100,
+                'offset':offset,
+            })
+            if not isinstance(rows,list):
+                raise BridgeFailure('erp_sales_list_invalid')
+            for row in rows:
+                if not isinstance(row,dict) or str(row.get('codigoCliente')) != customer:
+                    raise BridgeFailure('erp_customer_filter_not_honored')
+                if resource == 'venda':
+                    key = str(row.get('idVenda',''))
+                    if not key:
+                        raise BridgeFailure('erp_sale_id_missing')
+                else:
+                    key = ':'.join([
+                        str(row.get('idVenda','')),
+                        str(row.get('iditem','')),
+                        str(row.get('documento','')),
+                        str(row.get('codigoProduto','')),
+                    ])
+                    if not str(row.get('idVenda','')) or not str(row.get('iditem','')):
+                        raise BridgeFailure('erp_sale_item_id_missing')
+                if key in rows_by_key:
+                    raise BridgeFailure('erp_pagination_repeated')
+                rows_by_key[key] = row
+            if len(rows) < 100:
+                return list(rows_by_key.values())
+        raise BridgeFailure('erp_pagination_limit')
+
+    async def purchase_history(self, customer, job):
+        payload = job.get('payload') or {}
+        limit = payload.get('purchase_history_limit',100)
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise BridgeFailure('invalid_purchase_history_limit')
+
+        sales = await self.customer_sales_rows('venda',customer,job)
+        items = await self.customer_sales_rows('venda-item',customer,job)
+
+        sales.sort(
+            key=lambda row:(str(row.get('dataHoraEmissao') or row.get('emissao') or ''),str(row.get('idVenda') or '')),
+            reverse=True,
+        )
+        selected_sales = sales[:limit]
+        selected_ids = {str(row.get('idVenda')) for row in selected_sales}
+
+        items_by_sale = {}
+        flat_items = []
+        for item in items:
+            sale_id = str(item.get('idVenda'))
+            if sale_id not in selected_ids:
+                continue
+            projected = project(item,SALE_ITEM_FIELDS)
+            items_by_sale.setdefault(sale_id,[]).append(projected)
+            flat_items.append(projected)
+
+        for sale_items in items_by_sale.values():
+            sale_items.sort(key=lambda row:(str(row.get('documento') or ''),int(row.get('iditem') or 0)))
+
+        sale_rows = []
+        for sale in selected_sales:
+            projected = project(sale,SALE_FIELDS)
+            sale_id = str(sale.get('idVenda'))
+            projected['items'] = items_by_sale.get(sale_id,[])
+            sale_rows.append(projected)
+
+        flat_items.sort(
+            key=lambda row:(str(row.get('dataHoraEmissao') or row.get('emissao') or ''),str(row.get('documento') or ''),int(row.get('iditem') or 0)),
+            reverse=True,
+        )
+
+        return {
+            'sales_total':len(sales),
+            'sales_returned':len(sale_rows),
+            'sales_truncated':len(sale_rows) < len(sales),
+            'items_total_for_returned_sales':len(flat_items),
+            'sales':sale_rows,
+            'items':flat_items,
+            'source':'uniplus_v2_venda',
+        }
+
     async def customer_orders(self, customer, job):
         rows_by_code = {}
         for offset in range(0,2000,100):
@@ -194,6 +282,13 @@ class BridgeWorker:
                 'sales_schema':schema,
                 'history_complete':False,
                 'schema_probe':True,
+            }
+        if payload.get('purchase_history') is True:
+            history = await self.purchase_history(customer,job)
+            return {
+                'customer':project(entity,ENTITY_FIELDS),
+                'purchase_history':history,
+                'history_complete':not history['sales_truncated'],
             }
         orders = await self.customer_orders(customer,job)
         duplicate_check = payload.get('duplicate_check')
