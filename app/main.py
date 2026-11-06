@@ -12,6 +12,7 @@ from app.services.realtime_audio import start_audio_worker, stop_audio_worker, a
 from app.services.crm_agent_worker import start_agent_worker, stop_agent_worker, agent_worker_status
 from app.services.order_notifications import start_order_notifications, stop_order_notifications, order_notifications_status
 from app.services.uniplus_orders import start_uniplus_orders, stop_uniplus_orders, uniplus_orders_status
+from app.services.uniplus_client import list_customer_sales_headers, list_customer_sale_items
 from app.services.history_study import start_history_study, stop_history_study, history_study_status
 from app.services.runtime_guard import is_pull_request_preview
 from app.models.database import SessionLocal, Conversation, Lead, LeadState, UsageLog
@@ -112,6 +113,39 @@ def memory_diagnostics(request: Request):
         "cycles": {org_id: cycle_snapshot(org_id) for org_id in organizations},
         "scope": "current_process_only",
     })
+
+
+@app.get("/api/uniplus/customer-history")
+async def uniplus_customer_history(request: Request, customer_code: str, sale_id: str = "", limit: int = 40):
+    expected = settings.BRUNO_API_KEY
+    supplied = request.headers.get("x-bruno-key", "")
+    if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
+        return JSONResponse(status_code=401, content={"error": "Nao autorizado"})
+
+    try:
+        if sale_id:
+            result = await list_customer_sale_items(customer_code, sale_id)
+            mode = "items"
+        else:
+            result = await list_customer_sales_headers(customer_code, limit)
+            mode = "headers"
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            headers={"Cache-Control": "no-store"},
+            content={"error": str(exc)},
+        )
+    except Exception:
+        return JSONResponse(
+            status_code=502,
+            headers={"Cache-Control": "no-store"},
+            content={"error": "uniplus_read_unavailable"},
+        )
+
+    return JSONResponse(
+        headers={"Cache-Control": "no-store"},
+        content={"ok": True, "mode": mode, "customer_code": str(customer_code), "result": result},
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
