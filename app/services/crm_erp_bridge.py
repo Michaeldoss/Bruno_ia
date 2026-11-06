@@ -111,6 +111,9 @@ def duplicate_candidates(records, customer, requested_items, source_date):
     return matches
 
 
+BRIDGE_CONTRACT = 'progressive_v1'
+
+
 class BridgeWorker:
     def __init__(self, client, settings, access_token):
         self.client = client
@@ -432,7 +435,7 @@ class BridgeWorker:
         return {'products':results,'entities':entities,'branch':branch,'stock_location':location}
 
     async def tick(self):
-        job = await self.rpc('claim')
+        job = await self.rpc('claim', data={'bridge_contract':BRIDGE_CONTRACT})
         if not job:
             _state['state']='idle'
             return
