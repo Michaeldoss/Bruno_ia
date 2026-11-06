@@ -206,27 +206,62 @@ class BridgeWorker:
             raise BridgeFailure('invalid_purchase_history_limit')
 
         sales = await self.customer_sales_rows('venda',customer,job)
-        items = await self.customer_sales_rows('venda-item',customer,job)
-
         sales.sort(
             key=lambda row:(str(row.get('dataHoraEmissao') or row.get('emissao') or ''),str(row.get('idVenda') or '')),
             reverse=True,
         )
         selected_sales = sales[:limit]
-        selected_ids = {str(row.get('idVenda')) for row in selected_sales}
+
+        semaphore = asyncio.Semaphore(8)
+
+        async def read_sale_items(sale):
+            sale_id = str(sale.get('idVenda') or '')
+            if not sale_id.isdigit():
+                raise BridgeFailure('erp_sale_id_missing')
+            rows_by_key = {}
+            async with semaphore:
+                for offset in range(0,500,100):
+                    rows = await self.read('venda-item',params={
+                        'codigoCliente.eq':customer,
+                        'idVenda.eq':sale_id,
+                        'limit':100,
+                        'offset':offset,
+                    })
+                    if not isinstance(rows,list):
+                        raise BridgeFailure('erp_sales_list_invalid')
+                    for row in rows:
+                        if not isinstance(row,dict):
+                            raise BridgeFailure('erp_object_invalid')
+                        if str(row.get('codigoCliente')) != customer or str(row.get('idVenda')) != sale_id:
+                            raise BridgeFailure('erp_sale_item_filter_not_honored')
+                        key = ':'.join([
+                            str(row.get('idVenda','')),
+                            str(row.get('iditem','')),
+                            str(row.get('documento','')),
+                            str(row.get('codigoProduto','')),
+                        ])
+                        if not str(row.get('iditem','')):
+                            raise BridgeFailure('erp_sale_item_id_missing')
+                        if key in rows_by_key:
+                            raise BridgeFailure('erp_pagination_repeated')
+                        rows_by_key[key] = row
+                    if len(rows) < 100:
+                        return list(rows_by_key.values())
+            raise BridgeFailure('erp_sale_item_pagination_limit')
 
         items_by_sale = {}
         flat_items = []
-        for item in items:
-            sale_id = str(item.get('idVenda'))
-            if sale_id not in selected_ids:
-                continue
-            projected = project(item,SALE_ITEM_FIELDS)
-            items_by_sale.setdefault(sale_id,[]).append(projected)
-            flat_items.append(projected)
-
-        for sale_items in items_by_sale.values():
-            sale_items.sort(key=lambda row:(str(row.get('documento') or ''),int(row.get('iditem') or 0)))
+        for batch_start in range(0,len(selected_sales),20):
+            if not (await self.rpc('heartbeat',job) or {}).get('ok'):
+                raise BridgeFailure('lease_lost')
+            batch = selected_sales[batch_start:batch_start+20]
+            batch_items = await asyncio.gather(*(read_sale_items(sale) for sale in batch))
+            for sale,items in zip(batch,batch_items):
+                sale_id = str(sale.get('idVenda'))
+                projected_items = [project(item,SALE_ITEM_FIELDS) for item in items]
+                projected_items.sort(key=lambda row:(str(row.get('documento') or ''),int(row.get('iditem') or 0)))
+                items_by_sale[sale_id] = projected_items
+                flat_items.extend(projected_items)
 
         sale_rows = []
         for sale in selected_sales:
@@ -247,7 +282,7 @@ class BridgeWorker:
             'items_total_for_returned_sales':len(flat_items),
             'sales':sale_rows,
             'items':flat_items,
-            'source':'uniplus_v2_venda',
+            'source':'uniplus_v2_venda_by_sale',
         }
 
     async def customer_orders(self, customer, job):
@@ -396,7 +431,7 @@ async def _loop():
         while True:
             try:
                 await worker.tick()
-                pause=20
+                pause=4
             except asyncio.CancelledError:
                 raise
             except Exception:

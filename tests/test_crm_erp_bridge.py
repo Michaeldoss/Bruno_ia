@@ -53,6 +53,8 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome['state'],'succeeded')
         self.assertEqual(outcome['result']['order_count'],1)
         self.assertNotIn('secret',outcome['result']['customer'])
+        item_calls=[r for r in self.erp_calls() if r.url.path=='/public-api/v2/venda-item']
+        self.assertEqual({r.url.params['idVenda.eq'] for r in item_calls},{'1','2'})
         self.assertTrue(all(r.method=='GET' for r in self.erp_calls()))
         self.assertTrue(all(r.headers['authorization']=='Bearer test-erp-token' for r in self.erp_calls()))
     async def test_purchase_history_limit_returns_bounded_order_details(self):
@@ -130,24 +132,31 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
                      'nomeCliente':'Cliente','nomeVendedor':'Venda','valorProdutos':1800,'desconto':100,'valorTotal':1800},
                 ])
             if r.url.path=='/public-api/v2/venda-item':
-                return httpx.Response(200,json=[
-                    {'idVenda':2,'iditem':1,'documento':'003288','modelo':'55','codigoCliente':'9001',
-                     'emissao':'2024-11-28','dataHoraEmissao':'2024-11-28T10:00:00',
-                     'codigoProduto':'8360','descricaoProduto':'DESLOCAMENTO','codigoUnidadeMedida':'UN',
-                     'quantidade':1220,'precoUnitario':1.5,'desconto':0,'total':1830,'valorTotal':1830,
-                     'condicaoPagamento':'2','frete':0,'status':1,'tipoItem':1,'codigoFilial':'1'},
-                    {'idVenda':2,'iditem':2,'documento':'003288','modelo':'55','codigoCliente':'9001',
-                     'emissao':'2024-11-28','dataHoraEmissao':'2024-11-28T10:00:00',
-                     'codigoProduto':'8357','descricaoProduto':'MANUTENCAO','codigoUnidadeMedida':'UN',
-                     'quantidade':1,'precoUnitario':650,'desconto':0,'total':650,'valorTotal':650,
-                     'condicaoPagamento':'2','frete':0,'status':1,'tipoItem':1,'codigoFilial':'1'},
-                    {'idVenda':1,'iditem':1,'documento':'002880','modelo':'55','codigoCliente':'9001',
-                     'emissao':'2024-08-08','dataHoraEmissao':'2024-08-08T10:00:00',
-                     'codigoProduto':'221988','descricaoProduto':'TINTA DG DTF 1LT - WHITE',
-                     'codigoUnidadeMedida':'LT','quantidade':5,'precoUnitario':380,'desconto':100,
-                     'total':1800,'valorTotal':1800,'condicaoPagamento':'4','frete':78,'status':1,
-                     'tipoItem':1,'codigoFilial':'1'},
-                ])
+                self.assertEqual(r.url.params['codigoCliente.eq'],'9001')
+                sale_id=r.url.params['idVenda.eq']
+                if sale_id=='2':
+                    return httpx.Response(200,json=[
+                        {'idVenda':2,'iditem':1,'documento':'003288','modelo':'55','codigoCliente':'9001',
+                         'emissao':'2024-11-28','dataHoraEmissao':'2024-11-28T10:00:00',
+                         'codigoProduto':'8360','descricaoProduto':'DESLOCAMENTO','codigoUnidadeMedida':'UN',
+                         'quantidade':1220,'precoUnitario':1.5,'desconto':0,'total':1830,'valorTotal':1830,
+                         'condicaoPagamento':'2','frete':0,'status':1,'tipoItem':1,'codigoFilial':'1'},
+                        {'idVenda':2,'iditem':2,'documento':'003288','modelo':'55','codigoCliente':'9001',
+                         'emissao':'2024-11-28','dataHoraEmissao':'2024-11-28T10:00:00',
+                         'codigoProduto':'8357','descricaoProduto':'MANUTENCAO','codigoUnidadeMedida':'UN',
+                         'quantidade':1,'precoUnitario':650,'desconto':0,'total':650,'valorTotal':650,
+                         'condicaoPagamento':'2','frete':0,'status':1,'tipoItem':1,'codigoFilial':'1'},
+                    ])
+                if sale_id=='1':
+                    return httpx.Response(200,json=[
+                        {'idVenda':1,'iditem':1,'documento':'002880','modelo':'55','codigoCliente':'9001',
+                         'emissao':'2024-08-08','dataHoraEmissao':'2024-08-08T10:00:00',
+                         'codigoProduto':'221988','descricaoProduto':'TINTA DG DTF 1LT - WHITE',
+                         'codigoUnidadeMedida':'LT','quantidade':5,'precoUnitario':380,'desconto':100,
+                         'total':1800,'valorTotal':1800,'condicaoPagamento':'4','frete':78,'status':1,
+                         'tipoItem':1,'codigoFilial':'1'},
+                    ])
+                return httpx.Response(200,json=[])
             return None
         self.override=handler
         await self.worker.tick()
@@ -155,7 +164,7 @@ class Bridge(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome['state'],'succeeded')
         result=outcome['result']
         history=result['purchase_history']
-        self.assertEqual(history['source'],'uniplus_v2_venda')
+        self.assertEqual(history['source'],'uniplus_v2_venda_by_sale')
         self.assertEqual(history['sales_total'],2)
         self.assertEqual(history['sales_returned'],2)
         self.assertFalse(history['sales_truncated'])
