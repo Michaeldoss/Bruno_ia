@@ -6,8 +6,10 @@ from app.services.uniplus_access_audit import ORIGIN, ROUTES, require_global_rea
 FIELDS = {
     'financial_documents_v1': ('id','documento','tipo','tipoOrigem','idOrigem','status','valor','saldo','juros','multa','emissao','vencimento','pagamento','baixa','entrada','registro','parcela','totalParcelas','codigoEntidade','nomeEntidade','codigoFilial','nomeFilial','codigoPlanoConta','nomePlanoConta','idTipoDocumentoFinanceiro','descricaoTipoDocumentoFinanceiro'),
     'service_orders': ('id','codigo','codigoCliente','nomeCliente','codigoFilial','codigoAtendente','nomeAtendente','status','data','dataOrdemServico','agendamento','inicioServico','dataUltmoEvento','descricaoTipoUltimoEvento','descricaoItem','valor','valorProdutos','valorServicos','descontoSubTotal','codigoCondicaoPagamento','descricaoCondicaoPagamento'),
+    'payment_condition': ('id','codigo','descricao','fator','inativo','percentual','tipo'),
     'financial_document_types': ('codigo','descricao','acao','inativo','tipoUso','localUso','formaPagamentoNfe'),
 }
+CATALOG_RESOURCES = {'payment_condition'}
 DATE_FIELDS = {'emissao','vencimento','pagamento','baixa','entrada','registro','data','dataOrdemServico','agendamento','inicioServico','dataUltmoEvento'}
 CODE_FIELDS = {'id','codigo','tipo','status','codigoEntidade','codigoCliente','codigoFilial','codigoPlanoConta','idTipoDocumentoFinanceiro','codigoAtendente'}
 
@@ -33,6 +35,7 @@ def validate_query(payload):
             try:
                 if date.fromisoformat(value).isoformat()!=value:raise ValueError()
             except ValueError:raise ManagementReadFailure('invalid_management_date') from None
+        elif name=='financial_documents_v1' and field in ('tipo','status') and op=='eq' and re.fullmatch(r'[A-Z0-9]{1,3}',value):pass
         elif field in CODE_FIELDS and op=='eq' and re.fullmatch(r'[0-9]{1,20}',value):pass
         else:raise ManagementReadFailure('invalid_management_filter')
     return name,limit,offset,filters
@@ -48,6 +51,8 @@ def matches(row,filters):
             actual=actual[:10]
             try:date.fromisoformat(actual)
             except ValueError:return False
+        elif field in ('tipo','status') and re.fullmatch(r'[A-Z]{1,3}',actual):
+            pass
         elif field in CODE_FIELDS:
             if not actual.isdigit():return False
             actual=str(int(actual));wanted=str(int(wanted))
@@ -59,14 +64,20 @@ async def read_resource(worker,job):
     name,limit,offset,filters=validate_query(job.get('payload') or {})
     await require_global_read(worker,job)
     token=await worker.access_token()
-    response=await worker.client.get(ORIGIN+ROUTES[name],params={**filters,'limit':limit,'offset':offset},
+    catalog=name in CATALOG_RESOURCES
+    response=await worker.client.get(ORIGIN+ROUTES[name],params=None if catalog else {**filters,'limit':limit,'offset':offset},
         headers={'Authorization':'Bearer '+token,'Accept':'application/json'},timeout=25,follow_redirects=False)
     if not response.is_success:raise ManagementReadFailure('management_http_'+str(response.status_code))
     if len(response.content)>2_000_000:raise ManagementReadFailure('management_response_too_large')
     try:rows=response.json()
     except ValueError:raise ManagementReadFailure('management_invalid_json') from None
-    if not isinstance(rows,list) or len(rows)>limit or any(not isinstance(row,dict) for row in rows):
+    if not isinstance(rows,list) or len(rows)>(1000 if catalog else limit) or any(not isinstance(row,dict) for row in rows):
         raise ManagementReadFailure('management_invalid_page')
+    snapshot_count=None
+    if catalog:
+        rows=[row for row in rows if matches(row,filters)]
+        snapshot_count=len(rows)
+        rows=rows[offset:offset+limit]
     if any(not matches(row,filters) for row in rows):
         raise ManagementReadFailure('management_filter_not_honored')
     projected=[]
@@ -78,4 +89,4 @@ async def read_resource(worker,job):
                 if isinstance(value,str) and len(value)>1000:raise ManagementReadFailure('management_field_too_large')
                 out[field]=value
         projected.append(out)
-    return {'management_read':{'resource':name,'source':ROUTES[name],'rows':projected,'returned':len(rows),'limit':limit,'offset':offset,'possibly_more':len(rows)==limit,'filters':filters},'history_complete':False}
+    return {'management_read':{'resource':name,'source':ROUTES[name],'rows':projected,'returned':len(rows),'limit':limit,'offset':offset,'possibly_more':offset+len(rows)<snapshot_count if catalog else len(rows)==limit,'pagination_mode':'local_catalog_snapshot' if catalog else 'server','snapshot_rows':snapshot_count,'filters':filters},'history_complete':False}
