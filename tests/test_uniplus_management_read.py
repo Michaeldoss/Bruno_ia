@@ -56,7 +56,7 @@ class Reads(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(self.calls[-1].url.query),'b\'\'')
 
     async def test_catalog_filters_are_applied_to_snapshot(self):
-        r=await self.run_read([{'codigo':'1'},{'codigo':'2'}],{'codigo.eq':'2'},resource='financial_document_types')
+        r=await self.run_read([{'codigo':'1'},{'codigo':'2'}],{'codigo.eq':'2'},resource='payment_condition')
         self.assertEqual(r['management_read']['rows'],[{'codigo':'2'}])
         self.assertFalse(r['management_read']['possibly_more'])
 

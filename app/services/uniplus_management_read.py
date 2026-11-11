@@ -9,7 +9,7 @@ FIELDS = {
     'payment_condition': ('id','codigo','descricao','fator','inativo','percentual','tipo'),
     'financial_document_types': ('codigo','descricao','acao','inativo','tipoUso','localUso','formaPagamentoNfe'),
 }
-CATALOG_RESOURCES = {'payment_condition','financial_document_types'}
+CATALOG_RESOURCES = {'payment_condition'}
 DATE_FIELDS = {'emissao','vencimento','pagamento','baixa','entrada','registro','data','dataOrdemServico','agendamento','inicioServico','dataUltmoEvento'}
 CODE_FIELDS = {'id','codigo','tipo','status','codigoEntidade','codigoCliente','codigoFilial','codigoPlanoConta','idTipoDocumentoFinanceiro','codigoAtendente'}
 
