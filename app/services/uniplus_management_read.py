@@ -54,7 +54,7 @@ def matches(row,filters):
         elif field in ('tipo','status') and re.fullmatch(r'[A-Z]{1,3}',actual):
             pass
         elif field in CODE_FIELDS:
-            if not actual.isdigit():return False
+            if not actual.isdigit() or not wanted.isdigit():return False
             actual=str(int(actual));wanted=str(int(wanted))
         if (op=='eq' and actual!=wanted) or (op=='gte' and actual<wanted) or (op=='lte' and actual>wanted):return False
     return True
@@ -78,6 +78,20 @@ async def read_resource(worker,job):
         rows=[row for row in rows if matches(row,filters)]
         snapshot_count=len(rows)
         rows=rows[offset:offset+limit]
+    query_mode='standard'
+    if not catalog and any(not matches(row,filters) for row in rows) and name=='financial_documents_v1' and any(key in filters for key in ('tipo.eq','status.eq')):
+        # Some v1 resources use named selectors instead of generic .eq filters.
+        # Try only these two finite selectors; validate every returned row again.
+        alternate={('tipo' if key=='tipo.eq' else 'status' if key=='status.eq' else key):value for key,value in filters.items()}
+        retry=await worker.client.get(ORIGIN+ROUTES[name],params={**alternate,'limit':limit,'offset':offset},
+            headers={'Authorization':'Bearer '+token,'Accept':'application/json'},timeout=25,follow_redirects=False)
+        if not retry.is_success:raise ManagementReadFailure('management_http_'+str(retry.status_code))
+        if len(retry.content)>2_000_000:raise ManagementReadFailure('management_response_too_large')
+        try:rows=retry.json()
+        except ValueError:raise ManagementReadFailure('management_invalid_json') from None
+        if not isinstance(rows,list) or len(rows)>limit or any(not isinstance(row,dict) for row in rows):
+            raise ManagementReadFailure('management_invalid_page')
+        query_mode='named_financial_selectors'
     if any(not matches(row,filters) for row in rows):
         raise ManagementReadFailure('management_filter_not_honored')
     projected=[]
@@ -89,4 +103,4 @@ async def read_resource(worker,job):
                 if isinstance(value,str) and len(value)>1000:raise ManagementReadFailure('management_field_too_large')
                 out[field]=value
         projected.append(out)
-    return {'management_read':{'resource':name,'source':ROUTES[name],'rows':projected,'returned':len(rows),'limit':limit,'offset':offset,'possibly_more':offset+len(rows)<snapshot_count if catalog else len(rows)==limit,'pagination_mode':'local_catalog_snapshot' if catalog else 'server','snapshot_rows':snapshot_count,'filters':filters},'history_complete':False}
+    return {'management_read':{'resource':name,'query_mode':query_mode,'source':ROUTES[name],'rows':projected,'returned':len(rows),'limit':limit,'offset':offset,'possibly_more':offset+len(rows)<snapshot_count if catalog else len(rows)==limit,'pagination_mode':'local_catalog_snapshot' if catalog else 'server','snapshot_rows':snapshot_count,'filters':filters},'history_complete':False}
