@@ -16,6 +16,11 @@ ROUTES = {
     'cost_centers': '/public-api/v1/centro-custo',
     'purchase_orders': '/public-api/v1/pedido-compra',
     'payment_terms': '/public-api/v1/condicoes-pagamento',
+    'chart_of_account': '/public-api/v1/plano-conta',
+    'cost_center': '/public-api/v1/centro-de-custo',
+    'payment_condition': '/public-api/v1/condicao-pagamento',
+    'bank': '/public-api/v1/banco',
+    'payment_method': '/public-api/v1/meio-pagamento',
     'openapi_v3': '/v3/api-docs',
     'openapi_v2': '/v2/api-docs',
     'openapi_public': '/public-api/swagger.json',
@@ -39,10 +44,7 @@ def schema_only(body):
     return {'shape': 'scalar'}
 
 
-async def audit_access(worker, job):
-    requested = (job.get('payload') or {}).get('api_access_probe')
-    if not isinstance(requested, list) or not 1 <= len(requested) <= 6 or any(not isinstance(k, str) or k not in ROUTES for k in requested) or len(set(requested)) != len(requested):
-        raise ValueError('invalid_api_probe')
+async def require_global_read(worker, job):
     # Customer-scoped authorizations must never become installation-wide reads.
     response = await worker.client.get(
         worker.settings.SUPABASE_URL.rstrip('/')+'/rest/v1/crm_erp_bridge_config',
@@ -54,6 +56,13 @@ async def audit_access(worker, job):
     rows = response.json()
     if not isinstance(rows, list) or len(rows)!=1 or rows[0].get('org_id') != job['org_id']:
         raise ValueError('global_read_authorization_required')
+
+
+async def audit_access(worker, job):
+    requested = (job.get('payload') or {}).get('api_access_probe')
+    if not isinstance(requested, list) or not 1 <= len(requested) <= 6 or any(not isinstance(k, str) or k not in ROUTES for k in requested) or len(set(requested)) != len(requested):
+        raise ValueError('invalid_api_probe')
+    await require_global_read(worker, job)
     results = []
     for name in requested:
         if not (await worker.rpc('heartbeat', job) or {}).get('ok'):
