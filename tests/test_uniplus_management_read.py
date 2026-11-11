@@ -14,11 +14,12 @@ class Queries(unittest.TestCase):
         self.assertFalse(matches({},{'emissao.gte':'2026-11-01'}))
 
 class Reads(unittest.IsolatedAsyncioTestCase):
-    async def run_read(self,rows,filters=None,authorized=True,resource='financial_documents_v1',offset=0):
+    async def run_read(self,rows,filters=None,authorized=True,resource='financial_documents_v1',offset=0,named_rows=None):
         self.calls=[]
         def handle(r):
             self.calls.append(r)
             if r.url.host=='db.invalid':return httpx.Response(200,json=[{'org_id':'org'}] if authorized else [])
+            if named_rows is not None and 'tipo' in r.url.params:return httpx.Response(200,json=named_rows)
             return httpx.Response(200,json=rows)
         async def token():return 'secret'
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
@@ -63,3 +64,15 @@ class Reads(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_maximum_is_enforced(self):
         with self.assertRaisesRegex(ManagementReadFailure,'invalid_page'):
             await self.run_read([{}]*1001,resource='payment_condition')
+
+    async def test_named_financial_selector_fallback_is_verified(self):
+        r=await self.run_read([{'id':1,'tipo':'R'}],{'tipo.eq':'P'},named_rows=[{'id':2,'tipo':'P'}])
+        self.assertEqual(r['management_read']['rows'],[{'id':2,'tipo':'P'}])
+        self.assertEqual(r['management_read']['query_mode'],'named_financial_selectors')
+        self.assertEqual(self.calls[-1].url.params['tipo'],'P')
+        self.assertNotIn('tipo.eq',self.calls[-1].url.params)
+
+    async def test_both_ignored_selector_forms_fail_closed(self):
+        with self.assertRaisesRegex(ManagementReadFailure,'filter_not_honored'):
+            await self.run_read([{'id':1,'tipo':'R'}],{'tipo.eq':'P'},named_rows=[{'id':3,'tipo':'R'}])
+        self.assertEqual(len(self.calls),3)
