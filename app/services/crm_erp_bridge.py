@@ -15,7 +15,7 @@ import httpx
 ERP_ORIGIN = 'https://vzan-getcard01.getcard.uniplusweb.com'
 logger = logging.getLogger(__name__)
 _task = None
-_state = {'state': 'stopped', 'release': 'erp-bridge-2'}
+_state = {'state': 'stopped', 'release': 'erp-bridge-3'}
 ENTITY_FIELDS = ('codigo','nome','razaoSocial','tipo','inativo','creditoRestrito','limiteCredito','cnpjCpf','cep','cepEntrega','endereco','numeroEndereco','bairro','cidade','estado')
 ORDER_FIELDS = ('codigo','cliente','tipoDocumento','status','data','vendedor','filial','condicaoPagamento','tipoDocumentoFinanceiro','codigoTransportadora','codigoTipoFrete','valor','valorFrete','desconto','percentualDescontoSubtotal','valorDescontoItens','codigoECommerce','cepEntrega','itens')
 ITEM_FIELDS = ('produto','nomeProduto','descricao','quantidade','precoUnitario','precoTotal','desconto','isBrinde','codigoUnidadeMedida')
@@ -340,6 +340,9 @@ class BridgeWorker:
         raise BridgeFailure('erp_pagination_limit')
 
     async def inspect(self, job):
+        if 'api_access_probe' in (job.get('payload') or {}):
+            from app.services.uniplus_access_audit import audit_access
+            return await audit_access(self, job)
         customer = code(job['customer_code'])
         entity = await self.read('entidades',customer)
         if str(entity.get('codigo')) != customer:
