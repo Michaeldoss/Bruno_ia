@@ -6,6 +6,7 @@ Data da conferência: 18/11/2026. Estado: **conteúdo candidato, pendente de rev
 
 - **S1 — [Produtos Doss Group — Representante/Revenda 2026](https://docs.google.com/spreadsheets/d/1FTcjDpfM36sbel2YsswxzB7SgO63BO-4/edit)**. Arquivo Excel; conteúdo e células conferidos na cópia retornada pelo Drive, cuja última modificação informada foi 18/11/2026 às 08h50 de Brasília. Usadas as abas `PRODUTOS FEBRATEX - 2026` e `SUPRIMENTOS`. A data do arquivo não comprova vigência de cada anotação.
 - **S2 — [Treinamento Técnico Avançado: Tinta Sublimática DGTex Premium](https://docs.google.com/document/d/1w3T0DUBEfpez83RNwJ8rJy-Xbh4vt5n8Z6dGIwvro0k)**. Documento interno, aba `Tab 1`, seções 2–7. Leitura realizada em 18/11/2026. O texto não apresenta laudos ou medições que sustentem suas afirmações comparativas.
+- **S3 — Consulta atual ao catálogo Uniplus via CRM**, concluída em 18/11/2026 às **09h47min03s de Brasília**. Evidência: `crm_erp_bridge_jobs.id = c7e010d5-caef-490d-b228-d0f7b82aaf09`, tipo `catalog`, estado `succeeded`, uma tentativa. A consulta identificou os registros ativos de DTF Prime branco e amarelo. Esta ficha conserva somente identidade de produto; preços e estoque exigem consulta atual diretamente ao ERP.
 
 ## 1. DGtex: sublimação, linhas e identificação da aplicação
 
@@ -30,12 +31,14 @@ A Doss apresenta DGtex Premium e DGtex Lite como linhas de tinta sublimática. A
 
 **Conteúdo candidato**
 
-A planilha Doss lista Tinta DTF Prime de 1 litro nas cores preto, ciano, magenta, amarelo e branco. O branco aparece com a grafia “WITHE”. O cadastro consultado repete o código 222353 para amarelo e branco; portanto, esse código da planilha não basta para identificar uma oferta. Confirme código, nome e embalagem na consulta atual ao ERP. Não confunda essa linha com os produtos que trazem UV no nome. Se o cliente disser apenas “procuro DTF”, esclareça se procura equipamento, tinta ou outro insumo antes de selecionar produto. A fonte não fornece um procedimento de troca de tinta, configuração de cura ou compatibilidade por modelo.
+A planilha Doss lista Tinta DTF Prime de 1 litro nas cores preto, ciano, magenta, amarelo e branco. O branco aparece com a grafia “WITHE”. A planilha consultada repete o código 222353 para amarelo e branco; portanto, esse código da planilha não basta para identificar uma oferta. Não confunda essa linha com os produtos que trazem UV no nome. Se o cliente disser apenas “procuro DTF”, esclareça se procura equipamento, tinta ou outro insumo antes de selecionar produto. A fonte não fornece um procedimento de troca de tinta, configuração de cura ou compatibilidade por modelo.
+
+Na consulta ao Uniplus concluída em 18/11/2026 às 09h47min03s de Brasília, o código **221935** correspondeu a **TINTA DTF PRIME WHITE - 1LT** e o código **222353** correspondeu a **TINTA DTF PRIME YELLOW- 1LT**, ambos ativos naquele momento. Evidência: consulta de catálogo `c7e010d5-caef-490d-b228-d0f7b82aaf09`, concluída com sucesso no CRM. A divergência da planilha continua sem correção: não usar o código 222353 para oferecer tinta branca com base nela. Antes da oferta, confirmar novamente código, nome e embalagem no ERP. Preço e estoque devem vir sempre de consulta atual diretamente ao ERP, nunca desta ficha de conhecimento.
 
 **Continuidade sugerida:** “Você procura a máquina ou tinta para uma DTF que já está trabalhando?”
 
-**Fonte:** S1, `PRODUTOS FEBRATEX - 2026!B34:D38`; duplicidade em `B37:B38`. Conferência adicional em `SUPRIMENTOS!A30:C34`.  
-**Limite de revisão:** não carregar o código conflitante como associação definitiva de cor; não extrair parâmetros operacionais da simples presença do produto na tabela.
+**Fonte:** S1, `PRODUTOS FEBRATEX - 2026!B34:D38`; duplicidade em `B37:B38`. Conferência adicional em `SUPRIMENTOS!A30:C34`. Identidade de branco/amarelo conferida em S3.  
+**Limite de revisão:** não permitir que a planilha conflitante sobreponha a identificação verificada no ERP; não extrair parâmetros operacionais da simples presença do produto na tabela. A consulta S3 não muda o estado pendente de revisão desta ficha.
 
 ## 3. UV Flex e UV DX: aplicação desejada
 
@@ -84,7 +87,7 @@ Uma nota comercial da Doss menciona chips para Epson F6200 e F6070 e conversão 
 
 ## Pendências objetivas para o responsável técnico
 
-- Resolver a duplicidade do código DTF amarelo/branco antes de publicar uma associação de SKU com cor.
+- Corrigir na planilha a duplicidade do código DTF amarelo/branco, usando a identificação conferida no ERP em S3. A planilha original não foi alterada nesta revisão.
 - Corrigir a divergência em `SUPRIMENTOS!B24:C27`: os nomes dizem 5 litros, mas a coluna de referência diz 1 litro. O leitor automático deve conferir a identidade atual no ERP.
 - Validar as fichas e anexar, quando existentes, documentos de cada linha: especificação do fabricante, orientação de transição, compatibilidade por configuração e critérios de aplicação.
 - Revisar o treinamento DGtex antes de promover suas alegações comparativas ou amplas de compatibilidade a conhecimento aprovado. Essas alegações foram deliberadamente excluídas dos conteúdos candidatos acima.
