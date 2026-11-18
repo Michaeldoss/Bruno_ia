@@ -33,7 +33,7 @@ def simulate_ink_handoff(*, event: CRMContinuation, lead_id: str,
     if event.org_id != authorization.org_id:
         raise PermissionError("authorization_org_mismatch")
     if current_agent_id != authorization.actual_current_agent_id:
-        raise PermissionError("conversation_agent_mismatch")
+        raise PermissionError("stale_conversation_assignment")
     if target_agent_id != authorization.target_agent_id:
         raise PermissionError("authorization_target_mismatch")
     authorize_transfer(authorization)
