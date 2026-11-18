@@ -19,7 +19,7 @@ A consulta ERP de 18/11/2026, às 09h47min03s de Brasília, confirmou estas iden
 - `221935`: `TINTA DTF PRIME WHITE - 1LT`.
 - `222353`: `TINTA DTF PRIME YELLOW- 1LT`.
 
-A planilha ainda repete o código do amarelo na linha do branco. Não usar essa divergência para substituir o resultado do ERP. Preço e disponibilidade exigem consulta atual; não são conhecimento durável.
+A fonte de 2025 foi confirmada e ainda repete o código do amarelo na linha do branco. A correção proposta está documentada abaixo e **não foi publicada**. Não usar essa divergência para substituir o resultado do ERP. Preço e disponibilidade exigem consulta atual; não são conhecimento durável.
 
 ## O que está em prévia e ainda não está no CRM de produção
 
@@ -33,11 +33,22 @@ A planilha ainda repete o código do amarelo na linha do branco. Não usar essa 
 
 Na continuação, foram corrigidos dois casos de silêncio após falha do modelo: pergunta pelo código de um produto já confirmado e pergunta curta como “Quanto fica?” sobre o produto anterior. O fluxo simulado mantém a preparação persistida e faz um único envio sintético. O filtro comercial também passou a reconhecer BRL, preços sem símbolo monetário e milhares; um preço unitário não autoriza oferecer parcelamento. Medidas, datas, embalagens e valores atribuídos ao cliente continuam preservados nos testes.
 
-## Fonte de produtos ainda a identificar
+## Fonte de produtos confirmada; correção ainda não publicada
 
-A tela `src/pages/ProductCatalog.jsx` do CRM contém dez famílias estáticas. Ela não consulta o índice de SKUs nem alimenta o resolvedor do Bruno. A consulta aos esquemas e às configurações do CRM também não identificou um catálogo comercial ou a URL do CSV. O serviço publicado lê `GOOGLE_SHEET_SUPRIMENTOS_URL`; seu valor efetivo depende da configuração privada do ambiente e ainda não foi confirmado.
+A fonte do catálogo em produção foi rastreada até o [arquivo de 2025 no Drive](https://docs.google.com/spreadsheets/d/1WWLllb5P9WFc-LkMLcnA5HCSBfdhyvi1/edit?gid=9362899#gid=9362899), ID `1WWLllb5P9WFc-LkMLcnA5HCSBfdhyvi1`. O arquivo é um XLSX, idêntico ao anexo recebido. SHA256 confirmado: `d658117b38437d66bb8763fc54e692e622754c15d3fbd3e5eb84b01b86a3c5d1`.
 
-Com as linhas do Excel identificado, a duplicidade do código `222353` faz tanto branco quanto amarelo retornarem `not_found`. Na reprodução local, alterar somente `SUPRIMENTOS!A34` de `222353` para `221935` fez as duas buscas resolverem corretamente. A célula equivalente na aba `PRODUTOS FEBRATEX - 2026` é `B38`. Antes de alterar a fonte remota, identificar o CSV efetivamente consumido e sua origem. Nenhuma dessas células foi alterada no original nesta entrega.
+A tela `src/pages/ProductCatalog.jsx` do CRM contém dez famílias estáticas. Ela não consulta o índice de SKUs nem alimenta o resolvedor do Bruno; não é a fonte a corrigir.
+
+Há um conflito entre duas linhas da aba `SUPRIMENTOS`:
+
+| Célula | Identificação na fonte | Código atual | Correção proposta |
+| --- | --- | --- | --- |
+| A30 | Tinta DTF Prime amarela | `222353` | Manter `222353` |
+| A31 | Tinta DTF Prime branca, grafada `WITHE` | `222353` | Alterar somente para `221935` |
+
+A alteração foi preparada em uma cópia local, sem sobrescrever o original. A comparação dos dados confirmou somente A31 alterada, mantendo 46 produtos, 20 configurações de equipamentos e as duas abas. Porém, o exportador removeu configurações de impressão e a definição do estilo personalizado de tabela `EQUIPAMENTOS-style`. Por isso, a cópia **não foi aprovada para substituir a fonte e não foi publicada**.
+
+A edição pontual pela interface da planilha aguarda autenticação. Não houve edição remota. Após a correção, será necessário reler a fonte e confirmar as duas identidades no resolvedor, preservando todos os demais dados e recursos do arquivo.
 
 ## O que continua como protótipo
 
@@ -48,7 +59,9 @@ Com as linhas do Excel identificado, a duplicidade do código `222353` faz tanto
 
 ## Conhecimento técnico e estado da automação
 
-Há **cinco fichas no CRM pendentes de revisão técnica**: DGtex, DTF Prime, UV Flex/DX, DGeco e avaliação Epson. A evidência ERP de identidade está registrada; ela não aprova automaticamente as fichas.
+As **cinco fichas de tintas e Epson no CRM continuam pendentes de revisão técnica**: DGtex, DTF Prime, UV Flex/DX, DGeco e avaliação Epson. A evidência ERP de identidade está registrada; ela não aprova automaticamente as fichas.
+
+Também foram registradas as **20 configurações de equipamentos** na ficha `6145a104-d436-4e84-8e81-73310ee24f7e`, em estado `pending`, **não aprovada**. Esse registro não contém preços atuais e não autoriza ofertas comerciais nem recomendações técnicas sem revisão.
 
 Conteúdo e fontes: [revisão técnica de tintas e Epson](bruno_ink_knowledge_review_20261118.md).
 
@@ -64,6 +77,7 @@ Publicação do serviço não significa ativação do atendimento automático.
 
 1. **Crédito da API OpenAI:** a verificação do modelo retorna `model_429_credit_balance_exhausted`. O serviço de verificação responde HTTP 503 por esse bloqueio interno do provedor; publicar código não repõe o crédito.
 2. **Faturamento do GitHub Actions:** impede a execução do CI da PR 439. Os resultados locais devem ser preservados, e o CI precisa ser executado após a liberação.
+3. **Correção da fonte de produtos:** a origem foi confirmada, mas A31 ainda precisa ser corrigida no arquivo remoto. A exportação local não preservou integralmente os recursos do arquivo; a edição pela interface aguarda autenticação.
 
 Não confundir falta de crédito com falha de publicação: a release atual do Bruno foi confirmada em produção, mas a geração pelo modelo continua indisponível.
 
@@ -72,9 +86,10 @@ Não confundir falta de crédito com falha de publicação: a release atual do B
 1. Regularizar o crédito da API OpenAI e repetir a verificação do modelo.
 2. Liberar o faturamento do GitHub Actions e reexecutar o CI da PR 439.
 3. Com CI aprovado e revisão concluída, mesclar a PR 439 e confirmar a versão no CRM de produção.
-4. Revisar tecnicamente as cinco fichas pelo fluxo existente de aprovação, preservando fontes e limites.
-5. Fazer um teste controlado: entrada do lead, identificação do produto, consulta ERP, resposta útil e continuidade registrada no CRM.
-6. Conferir ausência de mensagem duplicada, preço sem fonte, promessa de retorno sem ação e silêncio por falha. Só então habilitar a automação no escopo do piloto.
+4. Concluir a autenticação, corrigir somente `SUPRIMENTOS!A31` para `221935` na fonte de 2025 e verificar a releitura, mantendo A30 como `222353`.
+5. Revisar tecnicamente as cinco fichas de tintas e Epson e a ficha de equipamentos pelo fluxo existente de aprovação, preservando fontes e limites.
+6. Fazer um teste controlado: entrada do lead, identificação do produto, consulta ERP, resposta útil e continuidade registrada no CRM.
+7. Conferir ausência de mensagem duplicada, preço sem fonte, promessa de retorno sem ação e silêncio por falha. Só então habilitar a automação no escopo do piloto.
 
 ## Exemplo de conversa: entrada “procuro DTF”
 
