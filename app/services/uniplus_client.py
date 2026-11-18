@@ -1,6 +1,9 @@
 import time
 import logging
 import asyncio
+import re
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Optional, Dict, Any
 import httpx
 from app.config import get_settings
@@ -542,6 +545,103 @@ async def list_customer_sale_items(customer_code: str, sale_id: str) -> Dict[str
 # ---------------------------------------------------------------------------
 # Instância compatível com o código atual do Bruno
 # ---------------------------------------------------------------------------
+def validate_catalog_codes(product_codes):
+    """Bound a read-only product request before obtaining ERP credentials."""
+    if (not isinstance(product_codes, list) or not 1 <= len(product_codes) <= 4
+            or any(not isinstance(value, str) or not re.fullmatch(r"[0-9]{1,20}", value)
+                   for value in product_codes)
+            or len(set(product_codes)) != len(product_codes)):
+        raise ValueError("invalid_product_codes")
+    return product_codes
+
+
+def _catalog_number(value, *, positive=False):
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError("invalid_catalog_number")
+    try:
+        number = Decimal(str(value))
+    except InvalidOperation:
+        raise ValueError("invalid_catalog_number") from None
+    if not number.is_finite() or (positive and number <= 0):
+        raise ValueError("invalid_catalog_number")
+    result = float(number)
+    if not (-1e100 < result < 1e100):
+        raise ValueError("invalid_catalog_number")
+    return result
+
+
+async def read_product_catalog(product_codes):
+    """Live catalog prices, not customer-specific terms or permission to issue orders.
+
+    Only configured ERP routes/branch/location are used. Stock failure stays
+    unknown; a failed product read never becomes a price of zero.
+    The HTTP endpoint owns the total deadline, including OAuth acquisition.
+    """
+    validate_catalog_codes(product_codes)
+    branch, location = str(UNIPLUS_FILIAL), str(UNIPLUS_LOCAL_ESTOQUE)
+    if not all(re.fullmatch(r"[0-9]{1,20}", value) for value in (branch, location)):
+        raise RuntimeError("invalid_catalog_configuration")
+    hdrs = await _headers()
+    async with httpx.AsyncClient(timeout=5, follow_redirects=False) as client:
+        async def read_stock(product_code):
+            try:
+                response = await client.get(
+                    f"{UNIPLUS_BASE_URL}/public-api/v1/saldo-estoque",
+                    headers=hdrs,
+                    params={"produto": product_code, "filial": branch, "localestoque": location},
+                    follow_redirects=False, timeout=2,
+                )
+                response.raise_for_status()
+                return _catalog_number(response.json())
+            except (httpx.HTTPError, ValueError, TypeError):
+                return None
+
+        async def read_product(product_code):
+            response = await client.get(
+                f"{UNIPLUS_BASE_URL}/public-api/v1/produtos/{product_code}",
+                headers=hdrs, params={"filial": branch}, follow_redirects=False,
+            )
+            response.raise_for_status()
+            record = response.json()
+            if not isinstance(record, dict) or str(record.get("codigo")) != product_code:
+                raise RuntimeError("erp_product_mismatch")
+            if record.get("inativo") not in (0, "0", False):
+                raise RuntimeError("erp_product_not_active")
+            name = record.get("nome")
+            unit = record.get("unidadeMedida")
+            if (not isinstance(name, str) or not name.strip() or len(name) > 240
+                    or not isinstance(unit, str) or not unit.strip() or len(unit) > 32):
+                raise RuntimeError("erp_product_incomplete")
+            return {"codigo": product_code, "nome": name.strip(), "inativo": 0,
+                    "preco": _catalog_number(record.get("preco"), positive=True),
+                    "unidadeMedida": unit.strip()}
+
+        async def read_one(product_code):
+            # Stock cannot extend the full request deadline or hide a valid price.
+            reads = [asyncio.create_task(read_product(product_code)),
+                     asyncio.create_task(read_stock(product_code))]
+            try:
+                product, stock = await asyncio.gather(*reads)
+            finally:
+                for task in reads:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*reads, return_exceptions=True)
+            return {"product": product, "available": stock}
+
+        tasks = [asyncio.create_task(read_one(value)) for value in product_codes]
+        try:
+            products = await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+    return {"source": "uniplus", "price_scope": "catalog",
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "products": products}
+
+
 class UniplusService:
     async def get_customer_by_phone(self, phone: str):
         return await get_customer_by_phone(phone)
@@ -554,3 +654,4 @@ class UniplusService:
 
 
 uniplus_service = UniplusService()
+

@@ -60,6 +60,8 @@ app = FastAPI(
 
 from app.api.reset_router import router as reset_router
 app.include_router(reset_router)
+from app.api.catalog import router as catalog_router
+app.include_router(catalog_router)
 
 @app.get("/")
 def health_check():
@@ -1511,3 +1513,4 @@ app.include_router(webhook_router, prefix="/webhooks", tags=["Webhooks"])
 # interromper mensagens enquanto o fluxo do n8n é atualizado.
 from app.api.webhooks import twilio_webhook
 app.add_api_route("/twils", twilio_webhook, methods=["POST"], name="twilio_webhook_legacy")
+
