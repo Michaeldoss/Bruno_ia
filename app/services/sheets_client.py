@@ -54,7 +54,9 @@ def _supply_terms(text: str) -> set:
     normalized = re.sub(r"\beco[\s-]+solvent(?:e)?\b", "eco", normalized)
     normalized = re.sub(r"(?<=\d)\.(?=l\b)", "", normalized)
     terms = {_SUPPLY_ALIASES.get(word, word) for word in re.findall(r"[a-z]+", normalized)}
-    if "dgtex" in terms:
+    # DGTEX also labels DTF products. Explicit technology takes precedence;
+    # retain the historical sublimation inference only for unqualified names.
+    if "dgtex" in terms and not terms & _TECHNOLOGIES:
         terms.add("subli")
     if "dgeco" in terms:
         terms.add("eco")
