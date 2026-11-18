@@ -24,14 +24,23 @@ A fonte de 2025 foi corrigida: `SUPRIMENTOS!A31` passou de `222353` para `221935
 ## O que está em prévia e ainda não está no CRM de produção
 
 - [PR 439 do CRM](https://github.com/Michaeldoss/doss-crm/pull/439) permanece aberta.
-- Head conferido: `791173956bff24018e2f5b27a86ef751671842dd`.
-- Validação local dos fluxos afetados: **69 testes aprovados**; ESLint de runtime aprovado nos três arquivos de aplicação alterados. Isso não representa execução de toda a suíte do CRM.
-- [Prévia Vercel](https://doss-ae9q7spd8-michaelsin-giehl-de-freitas-projects.vercel.app): estado `READY`, no mesmo head.
-- A anotação da [execução 44304843209](https://github.com/Michaeldoss/doss-crm/actions/runs/44304843209) informou falha de pagamento ou limite de gastos. A [execução do código final, 44314086951](https://github.com/Michaeldoss/doss-crm/actions/runs/44314086951), voltou a falhar antes de executar etapas.
+- Head conferido: `9fa87ea2150953cf6b30de96d56f63d39e1bce5d`.
+- Validação local dos fluxos afetados: **77 testes aprovados**; ESLint de runtime aprovado nos três arquivos de aplicação alterados. Isso não representa execução de toda a suíte do CRM.
+- [Prévia Vercel](https://doss-5m9sode73-michaelsin-giehl-de-freitas-projects.vercel.app): estado `READY`, no mesmo head.
+- A anotação da [execução 44304843209](https://github.com/Michaeldoss/doss-crm/actions/runs/44304843209) informou falha de pagamento ou limite de gastos. A [execução do código atual, 44337601515](https://github.com/Michaeldoss/doss-crm/actions/runs/44337601515), voltou a falhar antes de executar etapas: `workflow-syntax` falhou com zero etapas e `tests-and-build` foi ignorado. A causa detalhada daquela anotação anterior não foi obtida novamente nesta execução.
 - A revisão incorpora a main `bbe0adc66eade4c7e9f1aca14f66e8bb2c474d40`, preservando as correções recentes de cartões de contato e aviso no perfil.
 - Prévia pronta e validação local não equivalem a CI aprovado nem a implantação no endereço de produção do CRM.
 
 Na continuação, foram corrigidos dois casos de silêncio após falha do modelo: pergunta pelo código de um produto já confirmado e pergunta curta como “Quanto fica?” sobre o produto anterior. O fluxo simulado mantém a preparação persistida e faz um único envio sintético. O filtro comercial também passou a reconhecer BRL, preços sem símbolo monetário e milhares; um preço unitário não autoriza oferecer parcelamento. Medidas, datas, embalagens e valores atribuídos ao cliente continuam preservados nos testes.
+
+A revisão mais recente acrescenta oito testes e duas correções de continuidade:
+
+- **Mudança de interesse:** se o cliente passa de tinta para máquina, Bruno retoma a qualificação do equipamento. O assunto antigo não faz uma pergunta de volume mensal virar uma pergunta de cor ou quantidade de tinta. Perguntas curtas de preço continuam vinculadas ao assunto atual; nome e cidade já informados permanecem disponíveis.
+- **Recusa explícita de compra:** frases como “tenho tinta suficiente, não preciso comprar agora” seguem o contrato de espera, sem consultar catálogo/modelo ou enviar uma nova oferta. Isso não encerra a conversa nem registra opt-out. Uma pendência como “meu pedido está atrasado” continua elegível para atendimento, mesmo na mesma mensagem da recusa.
+
+Os testes também cobrem “quero uma máquina, mas não quero comprar tinta”: a recusa do insumo não deve substituir o pedido positivo de equipamento. A detecção de recusa é deliberadamente conservadora; não é garantia de classificação determinística de toda frase possível sobre estoque. A validação do contrato de espera foi feita com dependências simuladas, sem alterar sessões reais.
+
+A revisão adicional considerou **34 mensagens de texto em cinco conversas recentes**. As mensagens de saída usadas como exemplos positivos estavam associadas a usuários do CRM; essa associação não comprova autoria exclusivamente humana. Os casos de teste foram reescritos sem dados que identifiquem clientes. A amostra ajudou a verificar a preservação da intenção atual, dos itens de reposição informados e da informação de estoque suficiente. Testes adicionais cobriram a recusa explícita de compra. Trata-se de uma amostra limitada para orientar regras e testes; não houve treinamento do modelo nem validação do atendimento ao vivo nesta revisão.
 
 ## Fonte de produtos corrigida e releitura validada
 
@@ -74,6 +83,8 @@ Essa verificação cobre a releitura da fonte e a resolução de candidatos. **N
 As **cinco fichas de tintas e Epson no CRM continuam pendentes de revisão técnica**: DGtex, DTF Prime, UV Flex/DX, DGeco e avaliação Epson. A evidência ERP de identidade está registrada; ela não aprova automaticamente as fichas.
 
 Também foram registradas as **20 configurações de equipamentos** na ficha `6145a104-d436-4e84-8e81-73310ee24f7e`, em estado `pending`, **não aprovada**. Esse registro não contém preços atuais e não autoriza ofertas comerciais nem recomendações técnicas sem revisão.
+
+Essa ficha foi compactada de **7.560 para 2.864 caracteres**, preservando as 20 configurações, os valores técnicos registrados, as 60 referências de células e as cinco notas de variantes. A comparação confirmou que a fonte e o estado de aprovação foram preservados. A alteração evita o corte do conteúdo por tamanho no caminho de leitura do CRM e permite que a ficha caiba isoladamente no orçamento de contexto do leitor legado do Bruno. **A ficha continua pendente e não foi ativada como conhecimento aprovado**; a compactação não comprova que todos os leitores incluirão todas as fichas simultaneamente.
 
 Conteúdo e fontes: [revisão técnica de tintas e Epson](bruno_ink_knowledge_review_20261118.md).
 
