@@ -4,7 +4,7 @@ Caller must supply verified commercial data and conversation history.
 No database writes, outbound messages, pipeline moves or handoffs occur here.
 """
 from dataclasses import dataclass
-from typing import Mapping, Sequence\nimport json
+from typing import Mapping, Sequence
 from app.services.llm_provider import OpenAIProvider
 from app.services.sdr_policy import SDRSignals, SDRAction, decide_next_action
 
