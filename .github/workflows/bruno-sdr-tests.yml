@@ -25,6 +25,8 @@ on:
       - 'tests/test_sdr_crm_projection.py'
       - 'app/services/sdr_crm_transfer_gate.py'
       - 'tests/test_sdr_crm_transfer_gate.py'
+      - 'app/services/sdr_crm_transfer_receipt.py'
+      - 'tests/test_sdr_crm_transfer_receipt.py'
       - 'tests/test_ink_turn_orchestrator.py'
       - 'tests/test_uniplus_ink_adapter.py'
       - 'tests/test_ink_offer_context.py'
@@ -49,4 +51,4 @@ jobs:
       - name: Compile SDR modules
         run: python -m compileall -q app/services/llm_provider.py app/services/sdr_policy.py app/services/bruno_sdr_engine.py app/services/commercial_guard.py app/services/conversation_continuity.py app/services/sdr_quality.py app/services/ink_sales_policy.py app/services/ink_offer_context.py app/services/uniplus_ink_adapter.py app/services/ink_turn_orchestrator.py app/services/ink_price_response_guard.py
       - name: Run SDR unit tests
-        run: python -m pytest -q tests/test_sdr_policy.py tests/test_llm_provider.py tests/test_bruno_sdr_engine.py tests/test_commercial_guard.py tests/test_conversation_continuity.py tests/test_sdr_quality.py tests/test_ink_sales_policy.py tests/test_ink_offer_context.py tests/test_uniplus_ink_adapter.py tests/test_ink_turn_orchestrator.py tests/test_ink_price_response_guard.py tests/test_ink_end_to_end_simulation.py tests/test_sdr_crm_handoff_contract.py tests/test_sdr_crm_projection.py tests/test_sdr_crm_transfer_gate.py
+        run: python -m pytest -q tests/test_sdr_policy.py tests/test_llm_provider.py tests/test_bruno_sdr_engine.py tests/test_commercial_guard.py tests/test_conversation_continuity.py tests/test_sdr_quality.py tests/test_ink_sales_policy.py tests/test_ink_offer_context.py tests/test_uniplus_ink_adapter.py tests/test_ink_turn_orchestrator.py tests/test_ink_price_response_guard.py tests/test_ink_end_to_end_simulation.py tests/test_sdr_crm_handoff_contract.py tests/test_sdr_crm_projection.py tests/test_sdr_crm_transfer_gate.py tests/test_sdr_crm_transfer_receipt.py
