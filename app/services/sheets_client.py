@@ -34,7 +34,7 @@ _TECHNOLOGIES = {"dtf", "uv", "subli", "eco"}
 _COLOURS = {"white", "black", "cyan", "magenta", "yellow", "verniz"}
 _LINES = {"dgtex", "dgeco", "prime", "premium", "lite", "nano", "flex", "dx"}
 _VARIANTS = _LINES - {"dgtex", "dgeco"}
-_MATERIALS = {"tinta", "filme", "po", "limpeza"}
+_MATERIALS = {"tinta", "filme", "po", "limpeza", "papel"}
 _SUPPLY_ALIASES = {
     "tintas": "tinta", "branca": "white", "branco": "white", "wht": "white", "withe": "white",
     "preta": "black", "preto": "black", "ciano": "cyan", "cian": "cyan",
@@ -43,6 +43,7 @@ _SUPPLY_ALIASES = {
     "sublimation": "subli", "ecosolvente": "eco", "ecosolvent": "eco",
     "filmes": "filme", "film": "filme", "powder": "po",
     "cleaner": "limpeza", "cleaning": "limpeza", "flexivel": "flex",
+    "papeis": "papel",
 }
 
 
@@ -88,6 +89,9 @@ def supply_name_matches_query(query: str, name: str) -> bool:
             or not 1 <= len(query.strip()) <= _SUPPLY_QUERY_LIMIT or not name.strip()):
         return False
     requested, actual = _supply_terms(query), _supply_terms(name)
+    # Equipment inquiries must never resolve to an ink just because both say DTF.
+    if requested & {"maquina", "maquinas", "impressora", "impressoras", "equipamento"} and not requested & _MATERIALS:
+        return False
     constraints = requested & (_TECHNOLOGIES | _COLOURS | _LINES | _MATERIALS)
     constraints |= {term for term in requested if term.startswith("size:")}
     if not constraints or not constraints <= actual:

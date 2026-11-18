@@ -65,6 +65,58 @@ class AgentWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(settings.CRM_AGENT_CONSUMERS, 1)
         self.assertLessEqual(settings.CRM_AGENT_CONSUMERS, 3)
 
+    async def test_unauthorized_probe_reports_http_status_without_error_text(self):
+        async def handler(request):
+            self.assertEqual(request.content, b'{"probe": true}')
+            return httpx.Response(401, json={"error": "Worker não autorizado. secret-token"})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            self.assertFalse(await worker.verify_model(client, "test-secret"))
+        status = worker.agent_worker_status()
+        self.assertEqual(status["verification_http_status"], 401)
+        self.assertEqual(status["verification_code"], "worker_auth_check_failed")
+        self.assertNotIn("secret-token", str(status))
+
+    async def test_malformed_error_body_does_not_escape_the_probe_loop(self):
+        async def handler(request):
+            return httpx.Response(503, content=b'{invalid', headers={"Content-Type": "application/json"})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            self.assertFalse(await worker.verify_model(client, "test-secret"))
+        self.assertEqual(worker.agent_worker_status()["verification_code"], "worker_http_503")
+
+    async def test_success_clears_previous_failure_diagnostics(self):
+        async def handler(request):
+            return httpx.Response(200, json={"state": "ready"})
+
+        with patch.dict(worker._state, {"state": "unavailable", "verification_code": "worker_auth_check_failed", "verification_http_status": 401}):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                self.assertTrue(await worker.verify_model(client, "test-secret"))
+            status = worker.agent_worker_status()
+            self.assertEqual(status["verification_code"], "ready")
+            self.assertEqual(status["verification_http_status"], 200)
+            self.assertEqual(status["state"], "ready")
+
+    async def test_unexpected_success_body_is_not_a_model_verification(self):
+        async def handler(request):
+            return httpx.Response(200, json=["ready"])
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            self.assertFalse(await worker.verify_model(client, "test-secret"))
+        self.assertEqual(worker.agent_worker_status()["verification_code"], "invalid_probe_response")
+
+    async def test_probe_redirect_never_follows_secret_and_reports_redirect(self):
+        seen = []
+        async def handler(request):
+            seen.append(request)
+            return httpx.Response(307, headers={"Location": "https://example.invalid"})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            self.assertFalse(await worker.verify_model(client, "test-secret"))
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(worker.agent_worker_status()["verification_code"], "worker_redirected")
+
 
 if __name__ == "__main__":
     unittest.main()
+
