@@ -10,7 +10,7 @@ VERIFIED_PRICE = re.compile(r"Preço aprovado consultado:\s*R\$\s*(\d[\d.,]*)")
 
 
 def _brl_decimal(value: str) -> Decimal:
-    value = value.strip()
+    value = value.strip().rstrip(".")
     if "," in value:
         value = value.replace(".", "").replace(",", ".")
     elif value.count(".") > 1:
