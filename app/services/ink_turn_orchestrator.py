@@ -10,7 +10,8 @@ from app.services.bruno_sdr_engine import BrunoSDREngine, SDRResult
 from app.services.uniplus_ink_adapter import (
     normalize_crm_catalog_result, select_ink_offer, UniplusInkLookupError,
 )
-from app.services.sdr_policy import SDRSignals
+from app.services.sdr_policy import SDRSignals, SDRAction
+from app.services.ink_price_response_guard import ensure_verified_ink_price_reply
 
 
 @dataclass(frozen=True)
@@ -54,4 +55,9 @@ async def draft_ink_turn(*, engine: BrunoSDREngine,
         sales_dna=sales_dna,
         signals=signals,
     )
+    try:
+        ensure_verified_ink_price_reply(result.reply, price_confirmed=confirmed)
+    except ValueError:
+        result = SDRResult(reply="", suggested_action=SDRAction.HANDOFF)
+        status = "unsafe_reply"
     return InkTurn(result=result, price_confirmed=confirmed, lookup_status=status)
