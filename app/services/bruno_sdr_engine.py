@@ -8,6 +8,7 @@ from typing import Mapping, Sequence
 from app.services.llm_provider import OpenAIProvider
 from app.services.conversation_continuity import ensure_continuity
 from app.services.sdr_quality import review_dtf_reply
+from app.services.ink_sales_policy import INK_SALES_INSTRUCTIONS
 from app.services.sdr_policy import SDRSignals, SDRAction, decide_next_action
 
 
@@ -85,7 +86,7 @@ class BrunoSDREngine:
                     ),
                 })
             reply = await self.provider.respond(
-                instructions=SDR_INSTRUCTIONS,
+                instructions=SDR_INSTRUCTIONS + '\n' + INK_SALES_INSTRUCTIONS,
                 messages=messages,
             )
             try:
