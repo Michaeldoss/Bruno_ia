@@ -56,7 +56,7 @@ async def draft_ink_turn(*, engine: BrunoSDREngine,
         signals=signals,
     )
     try:
-        ensure_verified_ink_price_reply(result.reply, price_confirmed=confirmed)
+        ensure_verified_ink_price_reply(result.reply, price_confirmed=confirmed, verified_context=context)
     except ValueError:
         result = SDRResult(reply="", suggested_action=SDRAction.HANDOFF)
         status = "unsafe_reply"
