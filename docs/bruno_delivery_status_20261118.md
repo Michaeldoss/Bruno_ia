@@ -19,7 +19,7 @@ A consulta ERP de 18/11/2026, às 09h47min03s de Brasília, confirmou estas iden
 - `221935`: `TINTA DTF PRIME WHITE - 1LT`.
 - `222353`: `TINTA DTF PRIME YELLOW- 1LT`.
 
-A fonte de 2025 foi confirmada e ainda repete o código do amarelo na linha do branco. A correção proposta está documentada abaixo e **não foi publicada**. Não usar essa divergência para substituir o resultado do ERP. Preço e disponibilidade exigem consulta atual; não são conhecimento durável.
+A fonte de 2025 foi corrigida: `SUPRIMENTOS!A31` passou de `222353` para `221935`, e A30 manteve `222353`. A releitura do CSV efetivamente usado pelo catálogo confirmou a alteração em 18/11/2026, às **11h58min55s de Brasília**. Essa validação identifica os produtos na fonte; preço e disponibilidade continuam exigindo consulta atual ao ERP e não são conhecimento durável.
 
 ## O que está em prévia e ainda não está no CRM de produção
 
@@ -33,22 +33,34 @@ A fonte de 2025 foi confirmada e ainda repete o código do amarelo na linha do b
 
 Na continuação, foram corrigidos dois casos de silêncio após falha do modelo: pergunta pelo código de um produto já confirmado e pergunta curta como “Quanto fica?” sobre o produto anterior. O fluxo simulado mantém a preparação persistida e faz um único envio sintético. O filtro comercial também passou a reconhecer BRL, preços sem símbolo monetário e milhares; um preço unitário não autoriza oferecer parcelamento. Medidas, datas, embalagens e valores atribuídos ao cliente continuam preservados nos testes.
 
-## Fonte de produtos confirmada; correção ainda não publicada
+## Fonte de produtos corrigida e releitura validada
 
-A fonte do catálogo em produção foi rastreada até o [arquivo de 2025 no Drive](https://docs.google.com/spreadsheets/d/1WWLllb5P9WFc-LkMLcnA5HCSBfdhyvi1/edit?gid=9362899#gid=9362899), ID `1WWLllb5P9WFc-LkMLcnA5HCSBfdhyvi1`. O arquivo é um XLSX, idêntico ao anexo recebido. SHA256 confirmado: `d658117b38437d66bb8763fc54e692e622754c15d3fbd3e5eb84b01b86a3c5d1`.
+A fonte do catálogo em produção foi rastreada até o [arquivo de 2025 no Drive](https://docs.google.com/spreadsheets/d/1WWLllb5P9WFc-LkMLcnA5HCSBfdhyvi1/edit?gid=9362899#gid=9362899), ID `1WWLllb5P9WFc-LkMLcnA5HCSBfdhyvi1`. Antes da edição, o XLSX era idêntico ao anexo recebido. SHA256 daquela versão original: `d658117b38437d66bb8763fc54e692e622754c15d3fbd3e5eb84b01b86a3c5d1`.
+
+A cópia arquivada da versão corrigida se chama `Produtos_Doss_2025_Corrigido_Origem.xlsx`, tem **23.815 bytes** e SHA256 `83eeb3b7a211de7e997fbbc6b240f76431c1cfe114cadcea79f8bde9a33b4690`. Esse é o hash do XLSX após a edição, diferente do hash do anexo original. A comparação do arquivo bruto obtido do Drive confirmou a preservação de conteúdo e formatos, com A31 como única célula alterada; o Google reindexou os mesmos 57 estilos e registros de texto e atualizou metadados. A identidade do arquivo de origem no Drive permanece a mesma.
 
 A tela `src/pages/ProductCatalog.jsx` do CRM contém dez famílias estáticas. Ela não consulta o índice de SKUs nem alimenta o resolvedor do Bruno; não é a fonte a corrigir.
 
-Há um conflito entre duas linhas da aba `SUPRIMENTOS`:
+O conflito entre duas linhas da aba `SUPRIMENTOS` foi corrigido na fonte:
 
-| Célula | Identificação na fonte | Código atual | Correção proposta |
+| Célula | Identificação na fonte | Código anterior | Código confirmado após salvar |
 | --- | --- | --- | --- |
-| A30 | Tinta DTF Prime amarela | `222353` | Manter `222353` |
-| A31 | Tinta DTF Prime branca, grafada `WITHE` | `222353` | Alterar somente para `221935` |
+| A30 | Tinta DTF Prime amarela | `222353` | `222353`, mantido |
+| A31 | Tinta DTF Prime branca, grafada `WITHE` | `222353` | `221935`, corrigido |
 
-A alteração foi preparada em uma cópia local, sem sobrescrever o original. A comparação dos dados confirmou somente A31 alterada, mantendo 46 produtos, 20 configurações de equipamentos e as duas abas. Porém, o exportador removeu configurações de impressão e a definição do estilo personalizado de tabela `EQUIPAMENTOS-style`. Por isso, a cópia **não foi aprovada para substituir a fonte e não foi publicada**.
+A edição pontual de A31 foi **salva pela interface da planilha**, após a autenticação Google. A releitura do CSV real terminou às **11h58min55s de Brasília de 18/11/2026** (`14:58:55 UTC`), com HTTP 200, **59 linhas e 46 produtos**. A comparação entre o CSV anterior e o posterior encontrou **uma única diferença: A31, de `222353` para `221935`**. A30 permaneceu `222353`; a grafia `WITHE` também foi preservada.
 
-A edição pontual pela interface da planilha aguarda autenticação. Não houve edição remota. Após a correção, será necessário reler a fonte e confirmar as duas identidades no resolvedor, preservando todos os demais dados e recursos do arquivo.
+A reprodução do resolvedor com esse CSV confirmou:
+
+| Consulta | Resultado do resolvedor |
+| --- | --- |
+| Tinta DTF branca 1L | Candidato `221935`, elegível para validação no ERP |
+| Tinta DTF amarela 1L | Candidato `222353`, elegível para validação no ERP |
+| Tinta DTF preta 1L | Candidato `222356`, elegível para validação no ERP |
+| Tinta UV Flex branca 1L | Candidato `222289`, elegível para validação no ERP |
+| DTF | Consulta ambígua, sem seleção automática de um produto |
+
+Essa verificação cobre a releitura da fonte e a resolução de candidatos. **Não é uma cotação ERP nem um teste de atendimento ou geração pelo modelo**, e não comprova disponibilidade ou condições comerciais. A evidência sem preços e sem caminhos temporários está em [bruno_catalog_fix_evidence_20261118.json](bruno_catalog_fix_evidence_20261118.json).
 
 ## O que continua como protótipo
 
@@ -77,7 +89,6 @@ Publicação do serviço não significa ativação do atendimento automático.
 
 1. **Crédito da API OpenAI:** a verificação do modelo retorna `model_429_credit_balance_exhausted`. O serviço de verificação responde HTTP 503 por esse bloqueio interno do provedor; publicar código não repõe o crédito.
 2. **Faturamento do GitHub Actions:** impede a execução do CI da PR 439. Os resultados locais devem ser preservados, e o CI precisa ser executado após a liberação.
-3. **Correção da fonte de produtos:** a origem foi confirmada, mas A31 ainda precisa ser corrigida no arquivo remoto. A exportação local não preservou integralmente os recursos do arquivo; a edição pela interface aguarda autenticação.
 
 Não confundir falta de crédito com falha de publicação: a release atual do Bruno foi confirmada em produção, mas a geração pelo modelo continua indisponível.
 
@@ -86,10 +97,9 @@ Não confundir falta de crédito com falha de publicação: a release atual do B
 1. Regularizar o crédito da API OpenAI e repetir a verificação do modelo.
 2. Liberar o faturamento do GitHub Actions e reexecutar o CI da PR 439.
 3. Com CI aprovado e revisão concluída, mesclar a PR 439 e confirmar a versão no CRM de produção.
-4. Concluir a autenticação, corrigir somente `SUPRIMENTOS!A31` para `221935` na fonte de 2025 e verificar a releitura, mantendo A30 como `222353`.
-5. Revisar tecnicamente as cinco fichas de tintas e Epson e a ficha de equipamentos pelo fluxo existente de aprovação, preservando fontes e limites.
-6. Fazer um teste controlado: entrada do lead, identificação do produto, consulta ERP, resposta útil e continuidade registrada no CRM.
-7. Conferir ausência de mensagem duplicada, preço sem fonte, promessa de retorno sem ação e silêncio por falha. Só então habilitar a automação no escopo do piloto.
+4. Revisar tecnicamente as cinco fichas de tintas e Epson e a ficha de equipamentos pelo fluxo existente de aprovação, preservando fontes e limites.
+5. Com o modelo disponível e a versão validada no CRM, fazer um teste controlado: entrada do lead, identificação do produto na fonte corrigida, consulta ERP atual, resposta útil e continuidade registrada no CRM.
+6. Conferir ausência de mensagem duplicada, preço sem fonte, promessa de retorno sem ação e silêncio por falha. Só então habilitar a automação no escopo do piloto.
 
 ## Exemplo de conversa: entrada “procuro DTF”
 
