@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 from app.services.llm_provider import OpenAIProvider
 from app.services.conversation_continuity import ensure_continuity
+from app.services.sdr_quality import review_dtf_reply
 from app.services.sdr_policy import SDRSignals, SDRAction, decide_next_action
 
 
@@ -92,6 +93,11 @@ class BrunoSDREngine:
             except ValueError as exc:
                 if str(exc) not in {"untracked_future_action", "empty_sdr_reply"}:
                     raise
+                continue
+            customer_text = next((str(m.get("content") or "") for m in reversed(history)
+                                  if m.get("role") == "user"), "")
+            review = review_dtf_reply(customer_text, safe_reply)
+            if not review.accepted:
                 continue
             return SDRResult(
                 reply=safe_reply,
