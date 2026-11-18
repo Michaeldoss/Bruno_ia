@@ -38,3 +38,41 @@ async def test_opt_out_never_calls_model():
     assert result.reply == ""
     assert result.suggested_action == SDRAction.STOP
     assert fake.calls == []
+
+
+class SequenceProvider:
+    def __init__(self, replies):
+        self.replies = iter(replies)
+        self.calls = []
+
+    async def respond(self, instructions, messages):
+        self.calls.append((instructions, messages))
+        return next(self.replies)
+
+
+@pytest.mark.asyncio
+async def test_untracked_promise_is_rewritten_in_same_turn():
+    provider = SequenceProvider([
+        "Vou consultar o preço e te retorno.",
+        "A DTF de 30 cm pode atender seu início. Qual é sua cidade?",
+    ])
+    result = await BrunoSDREngine(provider).draft(
+        history=[{"role": "user", "content": "Quanto custa a DTF?"}],
+    )
+    assert len(provider.calls) == 2
+    assert "Qual é sua cidade?" in result.reply
+    assert result.suggested_action == SDRAction.CONTINUE
+
+
+@pytest.mark.asyncio
+async def test_two_untracked_promises_require_human_handoff():
+    provider = SequenceProvider([
+        "Vou consultar o preço.",
+        "Vou verificar e já te passo.",
+    ])
+    result = await BrunoSDREngine(provider).draft(
+        history=[{"role": "user", "content": "Quanto custa a DTF?"}],
+    )
+    assert len(provider.calls) == 2
+    assert result.reply == ""
+    assert result.suggested_action == SDRAction.HANDOFF
