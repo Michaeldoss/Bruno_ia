@@ -1,0 +1,134 @@
+{
+  "evidence_type": "catalog_source_correction_and_resolver_validation",
+  "source": {
+    "drive_file_id": "1WWLllb5P9WFc-LkMLcnA5HCSBfdhyvi1",
+    "verified_file_url": "https://docs.google.com/spreadsheets/d/1WWLllb5P9WFc-LkMLcnA5HCSBfdhyvi1/edit?gid=9362899#gid=9362899",
+    "sheet": "SUPRIMENTOS",
+    "corrected_cell": "SUPRIMENTOS!A31",
+    "unchanged_control_cell": "SUPRIMENTOS!A30",
+    "correction_saved": true,
+    "save_method": "Google spreadsheet interface",
+    "drive_file_identity_preserved": true
+  },
+  "workbook_versions": {
+    "before_edit": {
+      "description": "Versão original recebida, antes da correção de A31.",
+      "sha256": "d658117b38437d66bb8763fc54e692e622754c15d3fbd3e5eb84b01b86a3c5d1"
+    },
+    "after_edit": {
+      "archived_filename": "Produtos_Doss_2025_Corrigido_Origem.xlsx",
+      "size_bytes": 23815,
+      "sha256": "83eeb3b7a211de7e997fbbc6b240f76431c1cfe114cadcea79f8bde9a33b4690",
+      "raw_drive_workbook_qa_passed": true,
+      "content_and_formats_preserved": true,
+      "only_cell_value_changed": "SUPRIMENTOS!A31",
+      "equivalent_style_records": 57,
+      "qa_note": "Comparação posterior do arquivo bruto do Drive confirmou preservação de conteúdo e formatos. O Google reindexou os mesmos estilos e registros de texto e atualizou metadados; não houve outra mudança de valor de célula."
+    }
+  },
+  "started_at_utc": "2026-11-18T14:58:43.390680+00:00",
+  "finished_at_utc": "2026-11-18T14:58:55.895255+00:00",
+  "before_sha256": "b8e862ce16e45b1558bce511c1a4d61cb7883147138e802ef4110088cbc2b3ad",
+  "after_sha256": "038ae3fa1c45936a30c81bd388839fdefe7c5a43c6d14e4ccbd0a98848a3a4a2",
+  "http_status": 200,
+  "content_type": "text/csv; charset=utf-8",
+  "bytes_after": 5225,
+  "csv_rows_before": 59,
+  "csv_rows_after": 59,
+  "product_rows_after": 46,
+  "differences": [
+    {
+      "cell": "A31",
+      "before": "222353",
+      "after": "221935"
+    }
+  ],
+  "only_expected_A31_change": true,
+  "product_count_preserved": true,
+  "dtf_white_yellow": [
+    {
+      "row": 30,
+      "sku": "222353",
+      "name": "TINTA DTF PRIME YELLOW- 1LT"
+    },
+    {
+      "row": 31,
+      "sku": "221935",
+      "name": "TINTA DTF PRIME WITHE- 1LT"
+    }
+  ],
+  "resolutions": {
+    "tinta DTF branca 1L": {
+      "candidates": [
+        {
+          "codigo": "221935",
+          "nome": "TINTA DTF PRIME WITHE- 1LT"
+        }
+      ],
+      "specific": true,
+      "catalog_decision": "eligible_for_ERP_validation"
+    },
+    "tinta DTF amarela 1L": {
+      "candidates": [
+        {
+          "codigo": "222353",
+          "nome": "TINTA DTF PRIME YELLOW- 1LT"
+        }
+      ],
+      "specific": true,
+      "catalog_decision": "eligible_for_ERP_validation"
+    },
+    "tinta DTF preta 1L": {
+      "candidates": [
+        {
+          "codigo": "222356",
+          "nome": "TINTA DTF PRIME BLACK - 1LT"
+        }
+      ],
+      "specific": true,
+      "catalog_decision": "eligible_for_ERP_validation"
+    },
+    "tinta UV Flex branca 1L": {
+      "candidates": [
+        {
+          "codigo": "222289",
+          "nome": "TINTA DTF UV FLEX (S/R) WHITE-1.L"
+        }
+      ],
+      "specific": true,
+      "catalog_decision": "eligible_for_ERP_validation"
+    },
+    "DTF": {
+      "candidates": [
+        {
+          "codigo": "221935",
+          "nome": "TINTA DTF PRIME WITHE- 1LT"
+        },
+        {
+          "codigo": "222353",
+          "nome": "TINTA DTF PRIME YELLOW- 1LT"
+        },
+        {
+          "codigo": "222354",
+          "nome": "TINTA DTF PRIME MAGENTA - 1LT"
+        },
+        {
+          "codigo": "222355",
+          "nome": "TINTA DTF PRIME CYAN - 1LT"
+        }
+      ],
+      "specific": false,
+      "catalog_decision": "ambiguous"
+    }
+  },
+  "all_lookup_checks_passed": true,
+  "writes_performed_by_this_validator": false,
+  "finished_at_brasilia": "2026-11-18T11:58:55.895255-03:00",
+  "validation_limits": [
+    "Reprodução do resolvedor com o CSV público efetivo. Não é uma cotação ERP nem um teste de atendimento/LLM.",
+    "Os quatro resultados específicos são candidatos elegíveis para validação no ERP; não constituem cotação, preço vigente, confirmação de estoque ou condição comercial.",
+    "A consulta genérica DTF permaneceu ambígua, sem seleção automática de um produto.",
+    "A verificação do CSV e do resolvedor não executou atendimento, não enviou mensagens a clientes e não ativou automação.",
+    "A validação de conteúdo e formatos do XLSX foi realizada separadamente, após a edição; os campos before_sha256 e after_sha256 identificam os CSVs, não os arquivos XLSX."
+  ]
+}
