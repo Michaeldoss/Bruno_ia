@@ -154,6 +154,12 @@ class ProductCatalogAPI(unittest.IsolatedAsyncioTestCase):
                 response = await self.get({"query": "tinta DTF branca"})
                 self.assertEqual(response.status_code, 502)
 
+    async def test_machine_request_does_not_become_an_ink_offer(self):
+        from app.services.sheets_client import supply_name_matches_query
+        self.assertFalse(supply_name_matches_query("quanto custa uma máquina DTF", "TINTA DTF PRIME WHITE 1L"))
+        self.assertTrue(supply_name_matches_query("tinta branca para minha impressora DTF", "TINTA DTF PRIME WHITE 1L"))
+        self.assertFalse(supply_name_matches_query("papel sublimático", "TINTA SUBLIMATICA PREMIUM 1L"))
+
 
 if __name__ == "__main__":
     unittest.main()

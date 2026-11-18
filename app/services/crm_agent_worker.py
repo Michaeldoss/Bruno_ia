@@ -44,20 +44,42 @@ async def _loop():
 
 
 async def verify_model(client, secret):
+    def body_from(response):
+        try:
+            body = response.json()
+            return body if isinstance(body, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+
+    def diagnostic_code(body, fallback):
+        code = body.get("code") or body.get("state")
+        return (code if isinstance(code, str) and 0 < len(code) <= 90
+                and code.replace("_", "").isalnum() else fallback)
+
     try:
         probe = await client.post(ENDPOINT, headers={"Authorization": f"Bearer {secret}"},
                                   json={"probe": True}, timeout=100, follow_redirects=False)
         probe.raise_for_status()
-        _state["model_verified"] = probe.json().get("state") == "ready"
-        return _state["model_verified"]
+        body = body_from(probe)
+        verified = body.get("state") == "ready"
+        _state.update(state="ready" if verified else "unavailable", model_verified=verified,
+                      verification_http_status=probe.status_code,
+                      verification_code="ready" if verified else diagnostic_code(body, "invalid_probe_response"))
+        return verified
     except httpx.HTTPStatusError as error:
-        body = error.response.json() if error.response.headers.get("content-type", "").startswith("application/json") else {}
-        code = body.get("code") or body.get("state") or "unknown"
-        safe_code = code if isinstance(code, str) and len(code) <= 90 and code.replace("_", "").isalnum() else "unknown"
-        _state.update(state="unavailable", model_verified=False, verification_code=safe_code)
-        logger.warning("CRM agent startup check failed (http=%s code=%s)", error.response.status_code, safe_code)
+        status = error.response.status_code
+        fallback = {401: "worker_auth_check_failed", 403: "worker_forbidden", 429: "worker_rate_limited"}.get(
+            status, "worker_redirected" if 300 <= status < 400 else f"worker_http_{status}")
+        # Error bodies may be HTML, malformed JSON, or a plain `error` string.
+        # Never copy that string, headers, tokens or URLs into public diagnostics.
+        safe_code = diagnostic_code(body_from(error.response), fallback)
+        _state.update(state="unavailable", model_verified=False, verification_code=safe_code,
+                      verification_http_status=status)
+        logger.warning("CRM agent startup check failed (http=%s code=%s)", status, safe_code)
     except Exception as error:
-        _state.update(state="unavailable", model_verified=False)
+        safe_code = "worker_probe_timeout" if isinstance(error, httpx.TimeoutException) else "worker_probe_unavailable"
+        _state.update(state="unavailable", model_verified=False,
+                      verification_http_status=None, verification_code=safe_code)
         logger.warning("CRM agent startup check failed (%s)", type(error).__name__)
     return False
 
@@ -97,3 +119,4 @@ async def stop_agent_worker():
 
 def agent_worker_status():
     return {**_state, "task_alive": bool(_task and not _task.done())}
+
