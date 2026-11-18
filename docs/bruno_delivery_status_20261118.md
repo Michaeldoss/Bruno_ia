@@ -24,11 +24,20 @@ A planilha ainda repete o código do amarelo na linha do branco. Não usar essa 
 ## O que está em prévia e ainda não está no CRM de produção
 
 - [PR 439 do CRM](https://github.com/Michaeldoss/doss-crm/pull/439) permanece aberta.
-- Head conferido: `f088a2f5a21b9dd97847a8d6532dafd0915f1ed8`.
-- Validação local informada nesta entrega: **62 testes aprovados e lint concluído**.
-- [Prévia Vercel](https://doss-92seasx0k-michaelsin-giehl-de-freitas-projects.vercel.app): estado `READY`.
-- A anotação da [execução 44304843209](https://github.com/Michaeldoss/doss-crm/actions/runs/44304843209) informou falha de pagamento ou limite de gastos. A [execução do código final, 44306506593](https://github.com/Michaeldoss/doss-crm/actions/runs/44306506593), voltou a falhar antes de executar etapas.
+- Head conferido: `791173956bff24018e2f5b27a86ef751671842dd`.
+- Validação local dos fluxos afetados: **69 testes aprovados**; ESLint de runtime aprovado nos três arquivos de aplicação alterados. Isso não representa execução de toda a suíte do CRM.
+- [Prévia Vercel](https://doss-ae9q7spd8-michaelsin-giehl-de-freitas-projects.vercel.app): estado `READY`, no mesmo head.
+- A anotação da [execução 44304843209](https://github.com/Michaeldoss/doss-crm/actions/runs/44304843209) informou falha de pagamento ou limite de gastos. A [execução do código final, 44314086951](https://github.com/Michaeldoss/doss-crm/actions/runs/44314086951), voltou a falhar antes de executar etapas.
+- A revisão incorpora a main `bbe0adc66eade4c7e9f1aca14f66e8bb2c474d40`, preservando as correções recentes de cartões de contato e aviso no perfil.
 - Prévia pronta e validação local não equivalem a CI aprovado nem a implantação no endereço de produção do CRM.
+
+Na continuação, foram corrigidos dois casos de silêncio após falha do modelo: pergunta pelo código de um produto já confirmado e pergunta curta como “Quanto fica?” sobre o produto anterior. O fluxo simulado mantém a preparação persistida e faz um único envio sintético. O filtro comercial também passou a reconhecer BRL, preços sem símbolo monetário e milhares; um preço unitário não autoriza oferecer parcelamento. Medidas, datas, embalagens e valores atribuídos ao cliente continuam preservados nos testes.
+
+## Fonte de produtos ainda a identificar
+
+A tela `src/pages/ProductCatalog.jsx` do CRM contém dez famílias estáticas. Ela não consulta o índice de SKUs nem alimenta o resolvedor do Bruno. A consulta aos esquemas e às configurações do CRM também não identificou um catálogo comercial ou a URL do CSV. O serviço publicado lê `GOOGLE_SHEET_SUPRIMENTOS_URL`; seu valor efetivo depende da configuração privada do ambiente e ainda não foi confirmado.
+
+Com as linhas do Excel identificado, a duplicidade do código `222353` faz tanto branco quanto amarelo retornarem `not_found`. Na reprodução local, alterar somente `SUPRIMENTOS!A34` de `222353` para `221935` fez as duas buscas resolverem corretamente. A célula equivalente na aba `PRODUTOS FEBRATEX - 2026` é `B38`. Antes de alterar a fonte remota, identificar o CSV efetivamente consumido e sua origem. Nenhuma dessas células foi alterada no original nesta entrega.
 
 ## O que continua como protótipo
 
