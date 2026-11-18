@@ -45,6 +45,8 @@ def select_ink_offer(snapshot: ERPInkSnapshot, *,
     if len(matches) != 1:
         raise UniplusInkLookupError("product_not_unique")
     row = matches[0]
+    if row.get("inativo") not in (None, 0, "0", False):
+        raise UniplusInkLookupError("inactive_product")
     # No fuzzy match, no fallback to historical price.
     price = row.get("preco_venda")
     if price is None or isinstance(price, bool):
@@ -59,3 +61,32 @@ def select_ink_offer(snapshot: ERPInkSnapshot, *,
             commercial_approved=commercial_approved,
         )
     )
+
+
+def normalize_crm_catalog_result(result: Mapping[str, object], *,
+                                 org_id: str) -> ERPInkSnapshot:
+    """Normalize the observed CRM ERP bridge catalog result.
+
+    Observed shape: {"checked_at": ..., "products": [
+      {"product": {"codigo": ..., "nome": ..., "preco": ...},
+       "available": ...}
+    ]}. A bridge result is not itself a commercial approval.
+    """
+    if not isinstance(result, Mapping):
+        raise UniplusInkLookupError("invalid_catalog_result")
+    checked_at = result.get("checked_at")
+    products = result.get("products")
+    if not isinstance(checked_at, str) or not isinstance(products, list):
+        raise UniplusInkLookupError("invalid_catalog_result")
+    normalized = []
+    for item in products:
+        if not isinstance(item, Mapping) or not isinstance(item.get("product"), Mapping):
+            raise UniplusInkLookupError("invalid_catalog_product")
+        product = item["product"]
+        normalized.append({
+            "codigo": str(product.get("codigo") or "").strip(),
+            "nome": str(product.get("nome") or "").strip(),
+            "preco_venda": product.get("preco"),
+            "inativo": product.get("inativo"),
+        })
+    return ERPInkSnapshot(rows=tuple(normalized), checked_at=checked_at, org_id=org_id)
