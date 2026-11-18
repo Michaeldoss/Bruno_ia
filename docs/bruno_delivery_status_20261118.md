@@ -24,16 +24,16 @@ A fonte de 2025 foi corrigida: `SUPRIMENTOS!A31` passou de `222353` para `221935
 ## O que está em prévia e ainda não está no CRM de produção
 
 - [PR 439 do CRM](https://github.com/Michaeldoss/doss-crm/pull/439) permanece aberta.
-- Head conferido: `9fa87ea2150953cf6b30de96d56f63d39e1bce5d`.
-- Validação local dos fluxos afetados: **77 testes aprovados**; ESLint de runtime aprovado nos três arquivos de aplicação alterados. Isso não representa execução de toda a suíte do CRM.
-- [Prévia Vercel](https://doss-5m9sode73-michaelsin-giehl-de-freitas-projects.vercel.app): estado `READY`, no mesmo head.
-- A anotação da [execução 44304843209](https://github.com/Michaeldoss/doss-crm/actions/runs/44304843209) informou falha de pagamento ou limite de gastos. A [execução do código atual, 44337601515](https://github.com/Michaeldoss/doss-crm/actions/runs/44337601515), voltou a falhar antes de executar etapas: `workflow-syntax` falhou com zero etapas e `tests-and-build` foi ignorado. A causa detalhada daquela anotação anterior não foi obtida novamente nesta execução.
+- Head conferido: `021a7daccb36a6475edbff318f4b4990b26253bd`.
+- Validação local dos fluxos afetados: **97 testes aprovados**, sem falhas ou testes ignorados, em seis arquivos de testes. ESLint aprovado nos arquivos de runtime e interface envolvidos. Isso não representa execução de toda a suíte do CRM.
+- [Prévia Vercel](https://doss-7lparwnir-michaelsin-giehl-de-freitas-projects.vercel.app): estado `READY`, no mesmo head.
+- O bloqueio de pagamento ou limite de gastos foi confirmado diretamente na anotação da [execução 44337601515](https://github.com/Michaeldoss/doss-crm/actions/runs/44337601515). A [execução do código atual, 44342807773](https://github.com/Michaeldoss/doss-crm/actions/runs/44342807773), também terminou com falha: `workflow-syntax` não executou nenhuma etapa e `tests-and-build` foi ignorado. Sua anotação detalhada não foi inspecionada novamente. O gate permanece obrigatório.
 - A revisão incorpora a main `bbe0adc66eade4c7e9f1aca14f66e8bb2c474d40`, preservando as correções recentes de cartões de contato e aviso no perfil.
 - Prévia pronta e validação local não equivalem a CI aprovado nem a implantação no endereço de produção do CRM.
 
 Na continuação, foram corrigidos dois casos de silêncio após falha do modelo: pergunta pelo código de um produto já confirmado e pergunta curta como “Quanto fica?” sobre o produto anterior. O fluxo simulado mantém a preparação persistida e faz um único envio sintético. O filtro comercial também passou a reconhecer BRL, preços sem símbolo monetário e milhares; um preço unitário não autoriza oferecer parcelamento. Medidas, datas, embalagens e valores atribuídos ao cliente continuam preservados nos testes.
 
-A revisão mais recente acrescenta oito testes e duas correções de continuidade:
+A revisão anterior acrescentou oito testes e duas correções de continuidade:
 
 - **Mudança de interesse:** se o cliente passa de tinta para máquina, Bruno retoma a qualificação do equipamento. O assunto antigo não faz uma pergunta de volume mensal virar uma pergunta de cor ou quantidade de tinta. Perguntas curtas de preço continuam vinculadas ao assunto atual; nome e cidade já informados permanecem disponíveis.
 - **Recusa explícita de compra:** frases como “tenho tinta suficiente, não preciso comprar agora” seguem o contrato de espera, sem consultar catálogo/modelo ou enviar uma nova oferta. Isso não encerra a conversa nem registra opt-out. Uma pendência como “meu pedido está atrasado” continua elegível para atendimento, mesmo na mesma mensagem da recusa.
@@ -41,6 +41,34 @@ A revisão mais recente acrescenta oito testes e duas correções de continuidad
 Os testes também cobrem “quero uma máquina, mas não quero comprar tinta”: a recusa do insumo não deve substituir o pedido positivo de equipamento. A detecção de recusa é deliberadamente conservadora; não é garantia de classificação determinística de toda frase possível sobre estoque. A validação do contrato de espera foi feita com dependências simuladas, sem alterar sessões reais.
 
 A revisão adicional considerou **34 mensagens de texto em cinco conversas recentes**. As mensagens de saída usadas como exemplos positivos estavam associadas a usuários do CRM; essa associação não comprova autoria exclusivamente humana. Os casos de teste foram reescritos sem dados que identifiquem clientes. A amostra ajudou a verificar a preservação da intenção atual, dos itens de reposição informados e da informação de estoque suficiente. Testes adicionais cobriram a recusa explícita de compra. Trata-se de uma amostra limitada para orientar regras e testes; não houve treinamento do modelo nem validação do atendimento ao vivo nesta revisão.
+
+### Preço confirmado deve ser apresentado
+
+Foi reproduzido outro caso no caminho completo do worker com dependências simuladas: o cliente pedia o preço de uma tinta exata, o catálogo devolvia uma única oferta confirmada e a cidade já estava no cadastro; ainda assim, rascunho e revisão perguntavam novamente a cidade. A resposta passava pelos filtros porque não inventava valores, mas omitia a informação solicitada.
+
+A correção apresenta o preço de tabela confirmado antes de preparar a mensagem. Ela atua em uma pergunta atual explícita de preço com oferta única compatível, mantém a decisão `reply`, as ações válidas de cadastro/card e a validação final anterior ao envio. Se não houver outra pergunta útil, não cria um handoff apenas para terminar a resposta. Uma resposta que já informa corretamente o preço permanece intacta; repetir o gasto do cliente não conta como cotação da Doss.
+
+Ambiguidade, SKU diferente, pedido de máquina, preço histórico e condições de frete, desconto, parcelamento ou entrega não são tratados como uma simples cotação unitária. Um handoff técnico legítimo mantém seu motivo. Os testes usam valores sintéticos; não constituem oferta comercial.
+
+### Disponibilidade visível no CRM
+
+O diagnóstico do Bruno já informava `model_429_credit_balance_exhausted`, mas o CRM descartava esse motivo e a conversa podia exibir “IA ativa” apenas porque a sessão estava habilitada. A nova versão separa a habilitação da sessão da disponibilidade informada pelo serviço.
+
+| Situação observada | Apresentação na nova versão |
+| --- | --- |
+| Saldo esgotado explicitamente confirmado | Atendimento indisponível por créditos da API esgotados |
+| `insufficient_quota`, sem confirmação específica de saldo | Limite de uso ou créditos da API |
+| Timeout, erro HTTP, JSON inválido ou diagnóstico ausente | Disponibilidade não verificada; não afirma uma queda confirmada |
+| Sessão pausada ou desabilitada | Mantém o motivo da pausa, mesmo com serviço disponível |
+| Observação vencida ou consulta posterior com falha | Retira a indicação verde anterior |
+
+Pausar o Inbox já habilitado continua possível durante indisponibilidade. Iniciar a automação continua exigindo disponibilidade. A ação, as permissões e o estado habilitado dos controles foram preservados; a aparência deixa de sugerir serviço saudável quando a disponibilidade não está confirmada.
+
+A consulta rápida de sessão continua a cada cinco segundos sem esperar pelo Render. O diagnóstico é consultado separadamente a cada 30 segundos, com cache curto e compartilhamento de requisição em andamento. A tela geral reaproveita sua atualização existente de 15 segundos. A data da observação não é renovada por um acerto do cache; após 75 segundos, uma observação antiga deixa de indicar disponibilidade.
+
+O novo modo de diagnóstico passa pela autenticação e pelo mesmo RPC de status que valida administrador configurado e organização. Usa a origem fixa do serviço, sem enviar credenciais do CRM, e retorna somente códigos e mensagens permitidos. Não chama o modelo, não assume trabalhos e não altera sessões. O resultado descreve a saúde reportada pelo worker; não comprova que uma mensagem foi gerada ou entregue.
+
+Além dos testes do parser, cache e autorização, os componentes reais foram montados em ambiente de teste com dados sintéticos. Foram verificados pausa acessível, isolamento do cache por conta/organização, polling separado, expiração e remoção do verde após erro. Não houve interação com clientes para essa validação.
 
 ## Fonte de produtos corrigida e releitura validada
 
@@ -88,13 +116,13 @@ Essa ficha foi compactada de **7.560 para 2.864 caracteres**, preservando as 20 
 
 Conteúdo e fontes: [revisão técnica de tintas e Epson](bruno_ink_knowledge_review_20261118.md).
 
-Na conferência desta entrega, a automação permaneceu assim:
+Na conferência inicial registrada nesta entrega, a automação estava assim:
 
 - Atendimento global da caixa de entrada: `false`.
 - Atendimento automático de novas entradas: `false`.
 - Sessões habilitadas: **0**.
 
-Publicação do serviço não significa ativação do atendimento automático.
+Publicação do serviço não significa ativação do atendimento automático. Esta continuação não alterou esses controles nem habilitou sessões.
 
 ## Bloqueios concretos restantes
 
