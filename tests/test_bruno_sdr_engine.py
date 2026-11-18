@@ -23,7 +23,8 @@ async def test_uses_verified_context_without_sending():
         sales_dna="Abordagem consultiva",
     )
     assert result.suggested_action == SDRAction.CONTINUE
-    assert "preço confirmado no ERP" in fake.calls[0][1][0]["content"]\n    assert "preço confirmado no ERP" not in fake.calls[0][0]
+    assert "preço confirmado no ERP" in fake.calls[0][1][0]["content"]
+    assert "preço confirmado no ERP" not in fake.calls[0][0]
     assert len(fake.calls) == 1
 
 
