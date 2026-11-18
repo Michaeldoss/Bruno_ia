@@ -54,7 +54,7 @@ class SequenceProvider:
 async def test_untracked_promise_is_rewritten_in_same_turn():
     provider = SequenceProvider([
         "Vou consultar o preço e te retorno.",
-        "A DTF de 30 cm pode atender seu início. Qual é sua cidade?",
+        "O preço vigente da DTF ainda não está confirmado. Qual é sua cidade?",
     ])
     result = await BrunoSDREngine(provider).draft(
         history=[{"role": "user", "content": "Quanto custa a DTF?"}],
