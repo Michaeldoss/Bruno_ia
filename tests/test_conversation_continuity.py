@@ -21,3 +21,13 @@ class ConversationContinuityTests(unittest.TestCase):
     def test_empty_response_rejected(self):
         with self.assertRaisesRegex(ValueError, "empty_sdr_reply"):
             ensure_continuity("  ")
+
+    def test_immediate_explanation_is_not_a_future_promise(self):
+        self.assertEqual(ensure_continuity("Te passo os detalhes: o preço inclui o produto."),
+                         "Te passo os detalhes: o preço inclui o produto.")
+
+    def test_delayed_return_variants_are_rejected(self):
+        for reply in ("Verifico o valor e te aviso.", "Depois te passo o preço.", "Vou te avisar."):
+            with self.subTest(reply=reply), self.assertRaisesRegex(ValueError, "untracked_future_action"):
+                ensure_continuity(reply)
+

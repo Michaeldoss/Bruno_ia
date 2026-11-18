@@ -11,7 +11,7 @@ from typing import Sequence, Mapping
 class LLMSettings:
     model: str
     api_key: str
-    max_output_tokens: int = 650
+    max_output_tokens: int = 1800
 
     @classmethod
     def from_environment(cls):
@@ -28,7 +28,12 @@ class OpenAIProvider:
     def __init__(self, settings: LLMSettings):
         from openai import AsyncOpenAI
         self.settings = settings
-        self.client = AsyncOpenAI(api_key=settings.api_key, timeout=45.0, max_retries=1)
+        # The engine owns the total deadline. Hidden SDK retries would multiply
+        # latency and can leave a customer waiting for several minutes.
+        self.client = AsyncOpenAI(api_key=settings.api_key, timeout=20.0, max_retries=0)
+
+    async def aclose(self) -> None:
+        await self.client.close()
 
     async def respond(self, instructions: str, messages: Sequence[Mapping[str, str]]) -> str:
         if not instructions.strip():
@@ -49,7 +54,10 @@ class OpenAIProvider:
             max_output_tokens=self.settings.max_output_tokens,
             store=False,
         )
+        if getattr(response, "status", "completed") != "completed":
+            raise RuntimeError("incomplete_model_response")
         output = (response.output_text or "").strip()
         if not output:
             raise RuntimeError("empty_model_response")
         return output
+

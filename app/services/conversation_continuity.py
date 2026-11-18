@@ -6,8 +6,10 @@ import re
 
 UNTRACKED_PROMISE = re.compile(
     r"\b(?:vou\s+(?:consultar|verificar|conferir|buscar|preparar)"
-    r"|(?:j[aá]\s+)?te\s+(?:retorno|passo)"
-    r"|vou\s+te\s+retornar)\b",
+    r"|(?:j[aá]\s+)?te\s+retorno"
+    r"|(?:depois|em\s+seguida|j[aá])\s+te\s+passo"
+    r"|vou\s+(?:te\s+)?(?:retornar|avisar)"
+    r"|(?:verifico|consulto|confiro)\s+.{0,80}?\b(?:retorno|aviso|passo))\b",
     re.IGNORECASE,
 )
 
@@ -18,3 +20,4 @@ def ensure_continuity(reply: str, *, action_confirmed: bool = False) -> str:
     if not action_confirmed and UNTRACKED_PROMISE.search(reply):
         raise ValueError("untracked_future_action")
     return reply.strip()
+

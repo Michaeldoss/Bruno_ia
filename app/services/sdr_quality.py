@@ -22,6 +22,8 @@ def review_dtf_reply(customer_message: str, reply: str) -> QualityReview:
         ensure_continuity(reply)
     except ValueError as exc:
         issues.append(str(exc))
+    if not isinstance(reply, str):
+        return QualityReview(accepted=False, issues=tuple(issues))
     if _PRICE_REQUEST.search(customer_message) and not _PRICE_REPLY.search(reply):
         issues.append("price_question_ignored")
     if _FALSE_PAYBACK.search(reply):
@@ -31,3 +33,4 @@ def review_dtf_reply(customer_message: str, reply: str) -> QualityReview:
     if not reply.strip():
         issues.append("empty_sdr_reply")
     return QualityReview(accepted=not issues, issues=tuple(dict.fromkeys(issues)))
+

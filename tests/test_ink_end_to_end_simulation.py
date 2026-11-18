@@ -49,5 +49,8 @@ class InkEndToEndTests(unittest.IsolatedAsyncioTestCase):
             commercial_approved=True,
         )
         self.assertEqual(outcome.lookup_status, "unsafe_reply")
-        self.assertEqual(outcome.result.reply, "")
+        self.assertIn("R$ 160,00", outcome.result.reply)
+        self.assertNotIn("190", outcome.result.reply)
+        self.assertTrue(outcome.result.fallback_used)
         self.assertEqual(outcome.result.suggested_action, SDRAction.HANDOFF)
+

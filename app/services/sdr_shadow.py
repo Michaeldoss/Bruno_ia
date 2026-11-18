@@ -33,11 +33,15 @@ async def evaluate_shadow(*, history, verified_product_context="",
         sales_dna = load_sales_dna()
     provider = OpenAIProvider(LLMSettings.from_environment())
     engine = BrunoSDREngine(provider)
-    result = await engine.draft(
-        history=history,
-        verified_product_context=verified_product_context,
-        approved_knowledge=approved_knowledge,
-        sales_dna=sales_dna,
-        signals=signals,
-    )
+    try:
+        result = await engine.draft(
+            history=history,
+            verified_product_context=verified_product_context,
+            approved_knowledge=approved_knowledge,
+            sales_dna=sales_dna,
+            signals=signals,
+        )
+    finally:
+        await provider.aclose()
     return ShadowEvaluation(result=result)
+

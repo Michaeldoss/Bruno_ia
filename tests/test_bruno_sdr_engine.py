@@ -1,3 +1,5 @@
+import asyncio
+import time
 import pytest
 from app.services.bruno_sdr_engine import BrunoSDREngine
 from app.services.sdr_policy import SDRSignals, SDRAction
@@ -74,5 +76,64 @@ async def test_two_untracked_promises_require_human_handoff():
         history=[{"role": "user", "content": "Quanto custa a DTF?"}],
     )
     assert len(provider.calls) == 2
-    assert result.reply == ""
+    assert "preço vigente" in result.reply
+    assert "Vou consultar" not in result.reply
+    assert result.fallback_used
     assert result.suggested_action == SDRAction.HANDOFF
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_produces_nonempty_reply_without_exception_text():
+    class BrokenProvider:
+        async def respond(self, **kwargs):
+            raise RuntimeError("Authorization: secret-token")
+
+    result = await BrunoSDREngine(BrokenProvider()).draft(
+        history=[{"role": "user", "content": "Quanto custa a tinta?"}],
+    )
+    assert result.reply
+    assert "secret-token" not in result.reply
+    assert result.suggested_action == SDRAction.HANDOFF
+
+
+@pytest.mark.asyncio
+async def test_retries_share_one_total_deadline():
+    class SlowProvider:
+        calls = 0
+
+        async def respond(self, **kwargs):
+            self.calls += 1
+            await asyncio.sleep(0.04)
+            return "Vou consultar o preço."
+
+    provider = SlowProvider()
+    started = time.monotonic()
+    result = await BrunoSDREngine(provider, timeout_seconds=0.06).draft(
+        history=[{"role": "user", "content": "Quanto custa a tinta?"}],
+    )
+    assert provider.calls == 2
+    assert time.monotonic() - started < 0.12
+    assert result.reply
+    assert result.fallback_used
+
+
+@pytest.mark.asyncio
+async def test_cancellation_propagates_without_reply():
+    class CancelledProvider:
+        async def respond(self, **kwargs):
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await BrunoSDREngine(CancelledProvider()).draft(
+            history=[{"role": "user", "content": "Preciso de tinta"}],
+        )
+
+
+@pytest.mark.asyncio
+async def test_repair_feedback_reports_actual_quality_issue():
+    provider = SequenceProvider(["Qual cidade? Qual seu nome?", "Qual aplicação você usa?"])
+    await BrunoSDREngine(provider).draft(
+        history=[{"role": "user", "content": "Preciso de tinta"}],
+    )
+    assert "too_many_questions" in provider.calls[1][1][-1]["content"]
+
