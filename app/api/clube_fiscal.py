@@ -122,3 +122,27 @@ async def fiscal_files(request:Request,file_id:str=None):
         raise HTTPException(502,"Confira o formato da exportação fiscal da filial.") from None
     except Exception:
         raise HTTPException(503,"Não foi possível consultar a origem fiscal do Uniplus.") from None
+
+
+@router.get("/vendas")
+async def direct_sales(request: Request, dia: str, offset: int = 0):
+    from datetime import date
+    from app.services.clube_vendas import sales_page
+    authorize(request)
+    try:
+        if date.fromisoformat(dia).isoformat() != dia or not 0 <= offset <= 100000:
+            raise ValueError()
+    except ValueError:
+        raise HTTPException(422, "Dia ou página inválidos.") from None
+    if uniplus_client.UNIPLUS_BASE_URL.rstrip("/") != BASE:
+        raise HTTPException(503, "Filial da integração não confirmada.")
+    try:
+        async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
+            result = await sales_page(client,await uniplus_client._headers(),dia,offset)
+            return JSONResponse(result,headers=NO_STORE)
+    except HTTPException:
+        raise
+    except (ValueError, TypeError):
+        raise HTTPException(502,"Filtros ou campos divergentes na consulta de vendas do Uniplus.") from None
+    except Exception:
+        raise HTTPException(503,"Consulta de vendas do Uniplus indisponível.") from None
