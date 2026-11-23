@@ -5,6 +5,8 @@ import json
 import re
 import zipfile
 from collections import Counter
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from xml.etree import ElementTree
 
 from fastapi import HTTPException
@@ -124,6 +126,34 @@ def stock_event(sale, lines, event, payment):
     }
 
 
+def scaled(value, scale):
+    try:
+        number = Decimal(str(value)) * scale
+        if number.is_finite() and 0 <= number <= 2**53 - 1 and number == number.to_integral_value():
+            return int(number)
+    except (InvalidOperation, ValueError):
+        pass
+    return None
+
+
+def purchase_lines(items, key, sale_day, order_days):
+    result = []
+    for item in items:
+        origin = str(item.get("codigoDavOrigem") or "0")
+        day = order_days.get(origin)
+        if origin == "0" and "codigoDavOrigem" in item:
+            day = sale_day
+        if str(item.get("chaveAcesso")) != key:
+            day = None
+        gross = scaled(item.get("valorProdutos"), 100)
+        discount = scaled(item.get("desconto") or 0, 100)
+        result.append({"day":day, "sku":str(item.get("codigoProduto") or ""),
+                       "unit":str(item.get("codigoUnidadeMedida") or ""),
+                       "qty":scaled(item.get("quantidade"), 10000),
+                       "cents":gross-discount if gross is not None and discount is not None and gross >= discount else None})
+    return result
+
+
 async def sales_page(client, headers, day, offset):
     import asyncio
     sales, orders = await asyncio.gather(
@@ -140,6 +170,7 @@ async def sales_page(client, headers, day, offset):
     events = [v for o in orders if (v:=order_match(o))]
     qualified = [s for s in sales if matching_key(s)]
     invoices, item_fields, linked_keys, states = [], set(), set(), Counter()
+    purchase_dates = []
     count_items = 0
     stock_events, payment_cache = [], {}
     for sale in sales:
@@ -156,6 +187,7 @@ async def sales_page(client, headers, day, offset):
             continue
         status = str(sale.get("status",""))
         if re.fullmatch(r"[A-Za-z0-9]{1,4}",status): states[status] += 1
+        order_days = {}
         grouped = {}
         for it in items:
             order_id=str(it.get("codigoDavOrigem") or "")
@@ -174,6 +206,13 @@ async def sales_page(client, headers, day, offset):
             if any(str(i.get("tipoDavOrigem"))!=str(order.get("tipoDocumento")) for i in lines): continue
             if key:
                 linked_keys.add(key)
+                raw_day = str(order.get("data") or "")[:10]
+                try:
+                    order_day = date.fromisoformat(raw_day).isoformat()
+                    if order_day <= day:
+                        order_days[number] = order_day
+                except ValueError:
+                    pass
             event=order_match(order)
             if event and not key:
                 if len(lines) != len(items):
@@ -185,7 +224,9 @@ async def sales_page(client, headers, day, offset):
             elif event:
                 events.append({**event,"key":key,"items":[{"sku":str(i.get("codigoProduto") or ""),
                     "unit":str(i.get("codigoUnidadeMedida") or ""),"quantity":i.get("quantidade")} for i in lines]})
-    return {"date":day,"offset":offset,"sales":len(sales),"issuerInvoices":len(qualified),"orders":len(orders),
+        if key and items:
+            purchase_dates.append({"key":key,"items":purchase_lines(items,key,day,order_days)})
+    return {"purchaseDates":purchase_dates,"date":day,"offset":offset,"sales":len(sales),"issuerInvoices":len(qualified),"orders":len(orders),
             "items":count_items,"orderCodes":sum(bool(order_match(o)) for o in orders),"linkedInvoices":len(linked_keys),
             "stockEvents":stock_events,"orderEvents":events,"documents":invoices,"statusCounts":dict(states),
             "nextOffset":offset+PAGE_SIZE if max(len(sales),len(orders))==PAGE_SIZE else None,
