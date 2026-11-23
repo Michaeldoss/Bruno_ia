@@ -13,13 +13,14 @@ async def test_direct_sales_use_issuer_key_and_only_emit_limited_output():
     assert matching_key({"chaveAcesso":k})==k
     def handler(req):
         if req.url.path.endswith('/venda'):
-            return httpx.Response(200,json=[{'idVenda':1,'codigoCliente':7,'chaveAcesso':k,'emissao':'2026-11-23','nomeCliente':'private_entity'}])
+            return httpx.Response(200,json=[{'idVenda':1,'codigoCliente':7,'chaveAcesso':k,'emissao':'2026-11-23','nomeCliente':'private_entity','codigoFilial':'1'}])
         if req.url.path.endswith('/venda-item'):
-            return httpx.Response(200,json=[{'idVenda':1,'iditem':1,'codigoCliente':7,'codigoProduto':'private_sku'}])
-        return httpx.Response(200,json=[{'codigo':20,'data':'2026-11-23','observacao':'DOSS-RES-AABB11223344CCDD private_message'}])
+            return httpx.Response(200,json=[{'idVenda':1,'iditem':1,'codigoCliente':7,'codigoProduto':'TINTA-C','codigoUnidadeMedida':'UN','quantidade':1,'codigoDavOrigem':'20','tipoDavOrigem':4,'chaveAcesso':k}])
+        return httpx.Response(200,json=[{'codigo':20,'filial':'1','cliente':'7','tipoDocumento':4,'cnpjCpfCliente':'11.222.333/0001-81','data':'2026-11-23','observacao':'DOSS-RES-AABB11223344CCDD private_message'}])
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         page=await sales_page(client,{},'2026-11-23',0)
     assert (page['sales'],page['issuerInvoices'],page['items'],page['orders'],page['orderCodes'])==(1,1,1,1,1)
+    assert page['linkedInvoices']==1 and page['orderEvents'][1]['key']==k
     assert page['documents']==[] and 'private_' not in str(page)
 
 @pytest.mark.asyncio
