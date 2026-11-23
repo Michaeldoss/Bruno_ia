@@ -62,6 +62,8 @@ from app.api.reset_router import router as reset_router
 app.include_router(reset_router)
 from app.api.catalog import router as catalog_router
 app.include_router(catalog_router)
+from app.api.clube_fiscal import router as clube_fiscal_router
+app.include_router(clube_fiscal_router)
 
 @app.get("/")
 def health_check():
