@@ -3,7 +3,6 @@ import hashlib
 import io
 import json
 import re
-import time
 import zipfile
 from collections import Counter
 from xml.etree import ElementTree
@@ -14,7 +13,6 @@ from app.services.crm_erp_bridge import ERP_ORIGIN
 ISSUER = "45024640000170"
 PAGE_SIZE = 12
 CODE = re.compile(r"(?<![\w-])DOSS-RES-[A-F0-9]{16}(?![\w-])", re.I)
-_schema_cache = {}
 
 
 async def rows(client, headers, route, params):
@@ -82,26 +80,6 @@ def homologated_xml(sale):
     return result
 
 
-async def fiscal_routes(client, headers):
-    # Account mapping utilities name these three possible fiscal resources.
-    # Only expose HTTP status and field names; absence of a resource never stops DAV processing.
-    if _schema_cache.get("until", 0) > time.monotonic():
-        return _schema_cache["result"]
-    result = {}
-    for path in ("v1/notas", "v1/nota-fiscal", "v1/notas-fiscais"):
-        try:
-            res = await client.get(ERP_ORIGIN+"/public-api/"+path, headers=headers, params={"limit":1,"offset":0}, timeout=3)
-            fields = []
-            if res.status_code == 200 and len(res.content) <= 100000:
-                body = res.json()
-                fields = field_names([b for b in (body[:1] if isinstance(body,list) else [body]) if isinstance(b,dict)])
-            result[path] = {"http":res.status_code,"fields":fields}
-        except (ValueError, OSError): result[path] = {"http":None}
-        except Exception: result[path] = {"http":None}
-    _schema_cache.update(until=time.monotonic()+86400,result=result)
-    return result
-
-
 async def sales_page(client, headers, day, offset):
     import asyncio
     sales, orders = await asyncio.gather(
@@ -151,7 +129,7 @@ async def sales_page(client, headers, day, offset):
                     "unit":str(i.get("codigoUnidadeMedida") or ""),"quantity":i.get("quantidade")} for i in lines]})
     return {"date":day,"offset":offset,"sales":len(sales),"issuerInvoices":len(qualified),"orders":len(orders),
             "items":count_items,"orderCodes":sum(bool(order_match(o)) for o in orders),"linkedInvoices":len(linked_keys),
-            "orderEvents":events,"documents":invoices,"statusCounts":dict(states),"fiscalRoutes":await fiscal_routes(client,headers) if qualified else {},
+            "orderEvents":events,"documents":invoices,"statusCounts":dict(states),
             "nextOffset":offset+PAGE_SIZE if max(len(sales),len(orders))==PAGE_SIZE else None,
             "fingerprint":hashlib.sha256(json.dumps([sale_ids,[str(d.get("codigo")) for d in orders]]).encode()).hexdigest(),
             "fields":{"sales":field_names(sales),"items":sorted(item_fields),"orders":field_names(orders)}}
