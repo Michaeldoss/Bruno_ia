@@ -80,6 +80,50 @@ def homologated_xml(sale):
     return result
 
 
+async def stock_payment(client, headers, order, cache):
+    label = "Clube Fidelidade"
+    def matches(value):
+        return isinstance(value, str) and " ".join(value.split()).casefold() == label.casefold()
+
+    direct = order.get("descricaoFormaPagamento") or order.get("formaPagamento")
+    if direct and not str(direct).isdigit():
+        return label if matches(direct) else ""
+    # The DAV may carry a catalog code rather than the payment label.
+    for field, route in (("tipoDocumentoFinanceiro", "v1/tipo-documento-financeiro"),
+                         ("condicaoPagamento", "v1/condicao-pagamento")):
+        value = order.get(field)
+        if matches(value):
+            return label
+        if not str(value).isdigit():
+            continue
+        key = (route, str(value))
+        if key not in cache:
+            found = await rows(client, headers, route, {"codigo.eq":str(value), "limit":2})
+            cache[key] = len(found)==1 and str(found[0].get("codigo"))==str(value) and matches(found[0].get("descricao"))
+        if cache[key]:
+            return label
+    return ""
+
+
+def stock_event(sale, lines, event, payment):
+    models = {str(i.get("modelo") or "").strip().zfill(2) for i in lines}
+    if models != {"01"} or sale.get("chaveAcesso"):
+        return None
+    notes = " ".join(str(sale.get(k) or "") for k in ("observacao","informacoesComplementares","infCpl"))
+    codes = set(CODE.findall(notes.upper()))
+    issuer = re.sub(r"[./\s-]", "", str(sale.get("cnpjEmitente") or sale.get("cnpjFilial") or ""))
+    number = str(sale.get("documento") or "")
+    return {
+        **event, "model":"01", "payment":payment, "documentCode":next(iter(codes)) if len(codes)==1 else "",
+        "branch":str(sale.get("codigoFilial") or ""), "sale":str(sale["idVenda"]), "number":number,
+        "issuer":issuer, "homologation":str(sale.get("tpAmb"))=="2",
+        "posted":sale.get("estoqueBaixado") is True and not sale.get("cancelado")
+                 and bool(number) and all(str(i.get("documento") or "")==number for i in lines),
+        "items":[{"sku":str(i.get("codigoProduto") or ""), "unit":str(i.get("codigoUnidadeMedida") or ""),
+                  "quantity":i.get("quantidade")} for i in lines],
+    }
+
+
 async def sales_page(client, headers, day, offset):
     import asyncio
     sales, orders = await asyncio.gather(
@@ -97,19 +141,25 @@ async def sales_page(client, headers, day, offset):
     qualified = [s for s in sales if matching_key(s)]
     invoices, item_fields, linked_keys, states = [], set(), set(), Counter()
     count_items = 0
-    for sale in qualified:
+    stock_events, payment_cache = [], {}
+    for sale in sales:
+        if sale.get("chaveAcesso") and not matching_key(sale):
+            continue
         customer, key = str(sale.get("codigoCliente","")), matching_key(sale)
         if not customer.isdigit(): continue
         items = await sale_items(client,headers,str(sale["idVenda"]),customer)
         item_fields.update(field_names(items))
         count_items += len(items)
-        invoices.extend(homologated_xml(sale))
+        if key:
+            invoices.extend(homologated_xml(sale))
+        elif not items or any(str(it.get("modelo") or "").strip().zfill(2)!="01" for it in items):
+            continue
         status = str(sale.get("status",""))
         if re.fullmatch(r"[A-Za-z0-9]{1,4}",status): states[status] += 1
         grouped = {}
         for it in items:
             order_id=str(it.get("codigoDavOrigem") or "")
-            if not order_id.isdigit() or int(order_id)==0 or str(it.get("chaveAcesso"))!=key: continue
+            if not order_id.isdigit() or int(order_id)==0 or (key and str(it.get("chaveAcesso"))!=key): continue
             grouped.setdefault(order_id,[]).append(it)
         for number, lines in grouped.items():
             if number not in by_number:
@@ -122,14 +172,22 @@ async def sales_page(client, headers, day, offset):
             order=by_number[number]
             if str(order.get("cliente"))!=customer or str(order.get("filial"))!=str(sale.get("codigoFilial")): continue
             if any(str(i.get("tipoDavOrigem"))!=str(order.get("tipoDocumento")) for i in lines): continue
-            linked_keys.add(key)
+            if key:
+                linked_keys.add(key)
             event=order_match(order)
-            if event:
+            if event and not key:
+                if len(lines) != len(items):
+                    continue
+                payment = await stock_payment(client, headers, order, payment_cache)
+                stock = stock_event(sale, lines, event, payment)
+                if stock:
+                    stock_events.append(stock)
+            elif event:
                 events.append({**event,"key":key,"items":[{"sku":str(i.get("codigoProduto") or ""),
                     "unit":str(i.get("codigoUnidadeMedida") or ""),"quantity":i.get("quantidade")} for i in lines]})
     return {"date":day,"offset":offset,"sales":len(sales),"issuerInvoices":len(qualified),"orders":len(orders),
             "items":count_items,"orderCodes":sum(bool(order_match(o)) for o in orders),"linkedInvoices":len(linked_keys),
-            "orderEvents":events,"documents":invoices,"statusCounts":dict(states),
+            "stockEvents":stock_events,"orderEvents":events,"documents":invoices,"statusCounts":dict(states),
             "nextOffset":offset+PAGE_SIZE if max(len(sales),len(orders))==PAGE_SIZE else None,
             "fingerprint":hashlib.sha256(json.dumps([sale_ids,[str(d.get("codigo")) for d in orders]]).encode()).hexdigest(),
             "fields":{"sales":field_names(sales),"items":sorted(item_fields),"orders":field_names(orders)}}
