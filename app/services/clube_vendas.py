@@ -147,7 +147,10 @@ def purchase_lines(items, key, sale_day, order_days):
             day = None
         gross = scaled(item.get("valorProdutos"), 100)
         discount = scaled(item.get("desconto") or 0, 100)
-        result.append({"day":day, "sku":str(item.get("codigoProduto") or ""),
+        result.append({"day":day,
+                       "order":origin if day and origin in order_days else None,
+                       "directSale":bool(day and "codigoDavOrigem" in item and origin == "0"),
+                       "sku":str(item.get("codigoProduto") or ""),
                        "unit":str(item.get("codigoUnidadeMedida") or ""),
                        "qty":scaled(item.get("quantidade"), 10000),
                        "cents":gross-discount if gross is not None and discount is not None and gross >= discount else None})
