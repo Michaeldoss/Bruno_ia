@@ -1,4 +1,4 @@
-"""Route a Club reservation to the seller registered for its customer."""
+"""Route a Club reservation to one of the designated sales contacts."""
 import os
 import re
 
@@ -11,6 +11,12 @@ from app.services.twilio_client import twilio_service
 
 CNPJ = re.compile(r"[A-Z0-9]{12}[0-9]{2}")
 CODE = re.compile(r"DOSS-RES-[0-9A-F]{16}")
+
+
+# Stable CRM profile IDs keep new ERP sellers outside the delivery list.
+MICHAELSIN = "aa5e61b1-a4dd-4905-9e77-6ab447b61a9f"
+DAVID = "a570720f-74cf-4de0-bb52-d8fafde8031a"
+RECEIVERS = (MICHAELSIN, DAVID)
 
 
 def pending(reason, **details):
@@ -41,24 +47,29 @@ async def resolve(client, cnpj):
         rows = [rows]
     if len(rows) != 1 or re.sub(r"[./\s-]", "", str(rows[0].get("cnpjCpf") or "")).upper() != cnpj:
         return pending("customer")
-    entity = rows[0]
-    # 'vendedor' is also an entity role flag. Only use the preferred seller code.
-    seller = str(entity.get("codigoVendedor") or "").strip()
-    if not re.fullmatch(r"[1-9][0-9]{0,14}", seller):
-        return pending("seller")
+    code = str(rows[0].get("codigoVendedor") or "").strip()
+    seller = code if re.fullmatch(r"[1-9][0-9]{0,14}", code) else None
     mapping = await crm(client, "crm_uniplus_sync", "seller_map", {"limit": 1})
-    agent = mapping[0]["seller_map"].get(seller) if mapping else None
-    if not agent:
+    owner = (mapping[0].get("seller_map") or {}).get(seller) if mapping else None
+    allowed = "in.(" + ",".join(RECEIVERS) + ")"
+    profiles = await crm(client, "profiles", "id,name", {"id": allowed, "is_active": "eq.true"})
+    names = {row["id"]: row["name"] for row in profiles if row["id"] in RECEIVERS}
+    if not names:
         return pending("mapping")
-    profiles = await crm(client, "profiles", "id,name", {"id": f"eq.{agent}", "is_active": "eq.true"})
-    if len(profiles) != 1:
-        return pending("mapping")
-    name = profiles[0]["name"]
-    instances = await crm(client, "whatsapp_instances", "phone_number", {"agent_id": f"eq.{agent}"})
-    numbers = {national_number(row["phone_number"]) for row in instances if row.get("phone_number")}
-    if len(numbers) != 1 or "" in numbers:
-        return pending("phone", seller=name)
-    return {"state": "resolved", "seller": name, "phone": numbers.pop()}
+    instances = await crm(client, "whatsapp_instances", "agent_id,phone_number", {"agent_id": allowed})
+    for agent in sorted(RECEIVERS, key=lambda agent: agent != owner):
+        if agent not in names:
+            continue
+        numbers = {national_number(row["phone_number"]) for row in instances
+                   if row.get("agent_id") == agent and row.get("phone_number")}
+        if len(numbers) != 1 or "" in numbers:
+            continue
+        route = {"state": "resolved", "seller": names[agent], "phone": numbers.pop()}
+        if agent != owner:
+            route["handoff"] = (f"Repassar ao responsável pelo cliente (vendedor Uniplus {seller})."
+                                if seller else "Conferir o responsável pelo CNPJ e encaminhar o resgate.")
+        return route
+    return pending("phone")
 
 
 async def handle_voucher(data):
@@ -108,6 +119,8 @@ async def handle_voucher(data):
         f"Código de resgate: {data['code']}",
         "Inclua o código de resgate na observação do pedido.",
     ])
+    if route.get("handoff"):
+        lines.append(route["handoff"])
     message = "\n".join(lines)
     from twilio.base.exceptions import TwilioRestException
     try:
@@ -117,6 +130,8 @@ async def handle_voucher(data):
                 ("company", "cnpj", "code", "title", "sku", "color", "quantity", "unit", "points"), 1)}
             if description:
                 variables["4"] += " — " + " ".join(description.split())
+            if route.get("handoff"):
+                variables["4"] += " — " + route["handoff"]
             sid = await twilio_service.send_whatsapp_template_message(route["phone"], template, variables)
         else:
             sid = await twilio_service.send_whatsapp_message(route["phone"], message)
