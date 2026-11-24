@@ -146,3 +146,12 @@ async def direct_sales(request: Request, dia: str, offset: int = 0):
         raise HTTPException(502,"Filtros ou campos divergentes na consulta de vendas do Uniplus.") from None
     except Exception:
         raise HTTPException(503,"Consulta de vendas do Uniplus indisponível.") from None
+
+
+@router.post("/resgate-vendedor")
+async def voucher_seller(request: Request):
+    from app.services.clube_resgate import handle_voucher
+    authorize(request)
+    if uniplus_client.UNIPLUS_BASE_URL.rstrip("/") != BASE:
+        raise HTTPException(503, "Filial da integração não confirmada.")
+    return JSONResponse(await handle_voucher(await request.json()), headers=NO_STORE)
