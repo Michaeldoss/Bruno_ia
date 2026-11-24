@@ -5,7 +5,7 @@ from app.services import clube_resgate as service
 
 CNPJ = "12345678000195"
 VOUCHER = dict(cnpj=CNPJ, code="DOSS-RES-0123456789ABCDEF", mode="send",
-               company="Empresa de teste", title="Tinta", sku="SKU1", color="Ciano",
+               company="Empresa de teste", title="Tinta", description="Tinta sublimática Premium de 1 litro.", sku="008136", color="Ciano",
                unit="UN", quantity=1, points=10)
 
 
@@ -32,4 +32,19 @@ def test_missing_route_never_sends_and_acceptance_is_not_delivery():
             result = asyncio.run(service.handle_voucher(VOUCHER))
             assert result["state"] == "accepted"
             phone, text = sender.await_args.args
+            assert VOUCHER["description"] in text and "Código do produto (ERP): 008136" in text
             assert phone == "5547900000000" and VOUCHER["code"] in text and CNPJ in text
+
+
+def test_template_keeps_full_product_and_separate_codes():
+    template_send = AsyncMock(return_value="SM" + "b" * 32)
+    route = {"state":"resolved", "seller":"Teste", "phone":"5547900000000"}
+    with patch.dict("os.environ", {"DOSS_CLUBE_RESGATE_TEMPLATE_SID": "HX-test"}), patch.object(
+        service.httpx, "AsyncClient", MagicMock()
+    ), patch.object(service, "resolve", AsyncMock(return_value=route)), patch.object(
+        service.twilio_service, "client", Mock()
+    ), patch.object(service.twilio_service, "send_whatsapp_template_message", template_send):
+        assert asyncio.run(service.handle_voucher(VOUCHER))["state"] == "accepted"
+        fields = template_send.await_args.args[2]
+        assert fields["3"] == VOUCHER["code"] and fields["5"] == VOUCHER["sku"]
+        assert fields["4"] == VOUCHER["title"] + " — " + VOUCHER["description"]
