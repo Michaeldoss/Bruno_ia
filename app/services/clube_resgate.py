@@ -1,4 +1,5 @@
 """Route a Club reservation to the seller registered for its customer."""
+import os
 import re
 
 import httpx
@@ -95,7 +96,13 @@ async def handle_voucher(data):
                "Inclua o código na observação do pedido do cliente.")
     from twilio.base.exceptions import TwilioRestException
     try:
-        sid = await twilio_service.send_whatsapp_message(route["phone"], message)
+        template = os.getenv("DOSS_CLUBE_RESGATE_TEMPLATE_SID", "").strip()
+        if template:
+            variables = {str(i): str(data[k]) for i, k in enumerate(
+                ("company", "cnpj", "code", "title", "sku", "color", "quantity", "unit", "points"), 1)}
+            sid = await twilio_service.send_whatsapp_template_message(route["phone"], template, variables)
+        else:
+            sid = await twilio_service.send_whatsapp_message(route["phone"], message)
     except TwilioRestException as exc:
         if 400 <= (exc.status or 0) < 500:
             return pending("channel", seller=route["seller"], phone=route["phone"])
