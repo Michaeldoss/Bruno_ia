@@ -9,17 +9,43 @@ VOUCHER = dict(cnpj=CNPJ, code="DOSS-RES-0123456789ABCDEF", mode="send",
                unit="UN", quantity=1, points=10)
 
 
-def test_lookup_validates_identity_and_uses_crm_number():
+def resolve_case(code, contacts, *, cnpj=CNPJ, active=None):
+    michael, david = service.RECEIVERS
     erp = Mock()
-    erp.json.return_value = [{"cnpjCpf": "12.345.678/0001-95", "codigoVendedor": 17, "celular": "11111111111"}]
+    erp.json.return_value = [{"cnpjCpf": "12.345.678/0001-95", "codigoVendedor": code}]
     client = Mock(get=AsyncMock(return_value=erp))
-    with patch.object(service.uniplus_client, "_headers", AsyncMock(return_value={})), patch.object(
-        service, "crm", AsyncMock(side_effect=[[{"seller_map": {"17": "user"}}],
-            [{"id": "user", "name": "Teste"}], [{"phone_number": "(47) 90000-0000"}]])
-    ):
-        result = asyncio.run(service.resolve(client, CNPJ))
-        assert result == {"state": "resolved", "seller": "Teste", "phone": "5547900000000"}
-        assert asyncio.run(service.resolve(client, "22345678000195"))["reason"] == "customer"
+
+    async def read_crm(_client, table, fields, filters):
+        if table == "crm_uniplus_sync":
+            return [{"seller_map": {"315": michael, "1743": david, "205": "other"}}]
+        allowed = "in.(" + ",".join(service.RECEIVERS) + ")"
+        if table == "profiles":
+            assert filters == {"id": allowed, "is_active": "eq.true"}
+            names = {michael: "Michaelsin", david: "David"}
+            return [{"id": a, "name": names[a]} for a in (service.RECEIVERS if active is None else active)]
+        assert table == "whatsapp_instances" and filters == {"agent_id": allowed}
+        return [{"agent_id": a, "phone_number": number} for a, number in contacts]
+    with patch.object(service.uniplus_client, "_headers", AsyncMock(return_value={})), patch.object(service, "crm", read_crm):
+        return asyncio.run(service.resolve(client, cnpj))
+
+
+def test_restricts_delivery_to_two_profiles_and_keeps_customer_validation():
+    michael, david = service.RECEIVERS
+    contacts = [(michael, "(47) 90000-0000"), (david, "(47) 90000-0001"), ("other", "(47) 90000-0002")]
+    assert resolve_case(315, contacts) == {"state": "resolved", "seller": "Michaelsin", "phone": "5547900000000"}
+    assert resolve_case(1743, contacts) == {"state": "resolved", "seller": "David", "phone": "5547900000001"}
+    for code in (205, 9017, None):
+        route = resolve_case(code, contacts)
+        assert route["seller"] == "Michaelsin" and route["handoff"]
+        if code:
+            assert str(code) in route["handoff"]
+    assert resolve_case(1743, contacts[:1])["seller"] == "Michaelsin"
+    assert resolve_case(315, contacts[1:])["seller"] == "David"
+    assert resolve_case(205, contacts, active=[david])["seller"] == "David"
+    assert resolve_case(205, contacts, active=[])["reason"] == "mapping"
+    assert resolve_case(205, contacts[2:])["reason"] == "phone"
+    assert resolve_case(315, contacts + [(michael, "(47) 90000-0003")])["seller"] == "David"
+    assert resolve_case(315, contacts, cnpj="22345678000195")["reason"] == "customer"
 
 
 def test_missing_route_never_sends_and_acceptance_is_not_delivery():
