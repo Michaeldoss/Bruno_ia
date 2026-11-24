@@ -150,6 +150,7 @@ async def direct_sales(request: Request, dia: str, offset: int = 0):
 
 @router.post("/resgate-vendedor")
 async def voucher_seller(request: Request):
+    """Encaminha os resgates a Michaelsin ou David, com repasse para os demais vendedores."""
     from app.services.clube_resgate import handle_voucher
     authorize(request)
     if uniplus_client.UNIPLUS_BASE_URL.rstrip("/") != BASE:
