@@ -88,18 +88,35 @@ async def handle_voucher(data):
         type(data.get(k)) is int and data[k] > 0 for k in ("quantity", "points")
     ):
         raise HTTPException(422, "Dados do resgate inválidos.")
+    description = data.get("description") or ""
+    if not isinstance(description, str) or len(description) > 600:
+        raise HTTPException(422, "Descrição do resgate inválida.")
     if not twilio_service.client:
         return pending("channel", seller=route["seller"], phone=route["phone"])
-    message = (f"Clube Doss · Resgate em homologação\n{data['company']} · CNPJ {data['cnpj']}\n"
-               f"Código: {data['code']}\n{data['title']} · SKU {data['sku']}\n"
-               f"{data['color']} · {data['quantity']} {data['unit']} · {data['points']} pontos\n"
-               "Inclua o código na observação do pedido do cliente.")
+    lines = [
+        "Clube Doss · Resgate em homologação",
+        f"Cliente: {data['company']} · CNPJ {data['cnpj']}",
+        f"Produto: {data['title']}",
+    ]
+    if description:
+        lines.append(f"Descrição: {description}")
+    lines.extend([
+        f"Código do produto (ERP): {data['sku']}",
+        f"Cor / variante: {data['color']}",
+        f"Quantidade: {data['quantity']} {data['unit']}",
+        f"Pontos reservados: {data['points']}",
+        f"Código de resgate: {data['code']}",
+        "Inclua o código de resgate na observação do pedido.",
+    ])
+    message = "\n".join(lines)
     from twilio.base.exceptions import TwilioRestException
     try:
         template = os.getenv("DOSS_CLUBE_RESGATE_TEMPLATE_SID", "").strip()
         if template:
             variables = {str(i): str(data[k]) for i, k in enumerate(
                 ("company", "cnpj", "code", "title", "sku", "color", "quantity", "unit", "points"), 1)}
+            if description:
+                variables["4"] += " — " + " ".join(description.split())
             sid = await twilio_service.send_whatsapp_template_message(route["phone"], template, variables)
         else:
             sid = await twilio_service.send_whatsapp_message(route["phone"], message)
