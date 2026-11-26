@@ -68,3 +68,13 @@ async def test_missing_customer_keeps_invoice_key_pending():
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         page=await sales_page(client,{},day,0,{"11222333000181"})
     assert page["unidentified"] == [k] and not page["memberInvoices"]
+
+
+def test_repeated_charge_and_tax_amounts_are_not_assumed_to_be_item_totals():
+    from app.services.clube_vendas import item_taxes,invoice_charges,purchase_lines
+    row=dict(icms=12,pis=0,cofins=0,iss=0,frete=15,seguro=0,quantidade=1,precoUnitario=100,chaveAcesso=key(),codigoDavOrigem=0)
+    assert invoice_charges({},[row,row])["frete"] is None
+    assert invoice_charges({"frete":15},[row,row])["frete"]==1500
+    assert "icms" in item_taxes([row,row],{})[1]
+    assert not item_taxes([row,row],{"icms":24})[1]
+    assert purchase_lines([row],key(),"2026-11-26",{},{})[0]["cents"]==8800
