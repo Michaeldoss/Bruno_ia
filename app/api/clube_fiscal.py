@@ -137,9 +137,10 @@ async def fiscal_files(request:Request,file_id:str=None,ambiente:Literal["produc
 @router.post("/vendas")
 async def direct_sales(request: Request, dia: str, offset: int = 0, ambiente:Literal["producao","homologacao"]="homologacao"):
     from datetime import date
-    from app.services.clube_vendas import sales_page
+    from app.services.clube_vendas import sales_page,monitored_states
     authorize(request)
     members = set()
+    watched = []
     if request.method == "POST":
         try:
             body = await request.json()
@@ -147,6 +148,13 @@ async def direct_sales(request: Request, dia: str, offset: int = 0, ambiente:Lit
             if not isinstance(values,list) or any(not isinstance(v,str) or not re.fullmatch(r"[A-Z0-9]{12}\d{2}",v) for v in values):
                 raise ValueError()
             members = set(values)
+            watched = body.get("watch",[])
+            if not isinstance(watched,list) or len(watched)>6 or any(
+                not isinstance(row,dict) or any(not re.fullmatch(r"[0-9]{1,20}",str(row.get(k,""))) for k in ("id","branch","customer"))
+                or not isinstance(row.get("key"),str) or not re.fullmatch(r"[0-9]{44}",row["key"]) or row["key"][6:20]!="45024640000170"
+                for row in watched
+            ):
+                raise ValueError()
         except (ValueError, KeyError, TypeError):
             raise HTTPException(422,"Lista de clientes do clube inválida.") from None
     try:
@@ -158,7 +166,13 @@ async def direct_sales(request: Request, dia: str, offset: int = 0, ambiente:Lit
         raise HTTPException(503, "Filial da integração não confirmada.")
     try:
         async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
-            result = await sales_page(client,await uniplus_client._headers(),dia,offset,members,"1" if ambiente=="producao" else "2")
+            headers = await uniplus_client._headers()
+            result = await sales_page(client,headers,dia,offset,members,"1" if ambiente=="producao" else "2")
+            if watched and ambiente=="producao":
+                try:
+                    result["watchedStates"] = await monitored_states(client,headers,watched)
+                except (ValueError, httpx.HTTPError, HTTPException):
+                    result["watchFailure"] = "Reconsulta das notas por identificador pendente no Uniplus."
             return JSONResponse(result,headers=NO_STORE)
     except HTTPException:
         raise
