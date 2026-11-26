@@ -65,14 +65,14 @@ async def sale_items(client, headers, sale_id, customer):
     return items
 
 
-def homologated_xml(sale):
-    from app.api.clube_fiscal import pilot_documents, NFE
+def authorized_xml(sale, environment):
+    from app.api.clube_fiscal import fiscal_documents, NFE
     result = []
     for name in ("xmlNFe", "xmlNfe", "xmlAutorizado", "xml"):
         xml = sale.get(name)
         if not isinstance(xml, str) or "<" not in xml[:100] or len(xml.encode()) > 1048576:
             continue
-        with zipfile.ZipFile(io.BytesIO(pilot_documents(xml.encode()))) as archive:
+        with zipfile.ZipFile(io.BytesIO(fiscal_documents(xml.encode(),environment))) as archive:
             for member in archive.namelist():
                 data = archive.read(member)
                 root = ElementTree.fromstring(data)
@@ -254,7 +254,7 @@ def preview_document(sale, key, recipient, day, items, dated, redeemed_orders):
             "lines":lines}
 
 
-async def sales_page(client, headers, day, offset, members=None):
+async def sales_page(client, headers, day, offset, members=None, environment="2"):
     import asyncio
     sales, orders = await asyncio.gather(
         rows(client, headers, "v2/venda", {"emissao.eq":day,"offset":offset,"limit":PAGE_SIZE}),
@@ -285,7 +285,7 @@ async def sales_page(client, headers, day, offset, members=None):
         item_fields.update(field_names(items))
         count_items += len(items)
         if key:
-            invoices.extend(homologated_xml(sale))
+            invoices.extend(authorized_xml(sale,environment))
         elif not items or any(str(it.get("modelo") or "").strip().zfill(2)!="01" for it in items):
             continue
         status = str(sale.get("status",""))
@@ -344,7 +344,7 @@ async def sales_page(client, headers, day, offset, members=None):
                     identified.append(key)
                     if recipient in members:
                         previews.append(preview_document(sale,key,recipient,day,items,dated,redeemed_orders))
-    return {"unidentified":unidentified,"identified":identified,"memberInvoices":previews,"purchaseDates":purchase_dates,"date":day,"offset":offset,"sales":len(sales),"issuerInvoices":len(qualified),"orders":len(orders),
+    return {"fiscalEnvironment":environment,"unidentified":unidentified,"identified":identified,"memberInvoices":previews,"purchaseDates":purchase_dates,"date":day,"offset":offset,"sales":len(sales),"issuerInvoices":len(qualified),"orders":len(orders),
             "items":count_items,"orderCodes":sum(bool(order_match(o)) for o in orders),"linkedInvoices":len(linked_keys),
             "stockEvents":stock_events,"orderEvents":events,"documents":invoices,"statusCounts":dict(states),
             "nextOffset":offset+PAGE_SIZE if max(len(sales),len(orders))==PAGE_SIZE else None,
