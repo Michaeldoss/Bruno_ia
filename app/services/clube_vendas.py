@@ -151,9 +151,43 @@ def line_amounts(item):
     return gross, net
 
 
-def purchase_lines(items, key, sale_day, order_days):
+TAX_FIELDS = ("icms", "pis", "cofins", "iss", "ipi", "icmsst", "icmsstfcp", "icmsstfcpdest")
+EMBEDDED_FIELDS = ("icms", "pis", "cofins", "iss")
+CHARGE_FIELDS = ("frete", "seguro", "outrasDespesas")
+
+
+def item_taxes(items, sale):
+    """Only use numeric, itemized amounts. Never split a repeated invoice total by guessing."""
+    taxes = [{k: scaled(row.get(k),100) for k in TAX_FIELDS} for row in items]
+    uncertain = set()
+    for k in EMBEDDED_FIELDS:
+        amounts = [row[k] for row in taxes]
+        header = scaled(sale.get(k),100)
+        if None in amounts or (header is not None and sum(amounts)!=header):
+            uncertain.add(k)
+        elif header is None and len(items)>1 and len(set(amounts))==1 and amounts[0]>0:
+            uncertain.add(k)
+    return taxes, uncertain
+
+
+def invoice_charges(sale, items):
+    # Some v2 fields echo the header on every row. Prefer the header; a
+    # single-item invoice or all-zero rows also identifies the total unambiguously.
+    result = {}
+    for k in CHARGE_FIELDS:
+        amount = scaled(sale.get(k),100)
+        rows = [scaled(item.get(k),100) for item in items]
+        if amount is None and rows:
+            if len(rows)==1 or all(v==0 for v in rows):
+                amount=rows[0]
+        result[k] = amount
+    return result
+
+
+def purchase_lines(items, key, sale_day, order_days, sale=None):
     result = []
-    for item in items:
+    taxes, uncertain = item_taxes(items,sale or {})
+    for item,tax in zip(items,taxes):
         origin = str(item.get("codigoDavOrigem") or "0")
         day = order_days.get(origin)
         if origin == "0" and "codigoDavOrigem" in item:
@@ -161,6 +195,9 @@ def purchase_lines(items, key, sale_day, order_days):
         if str(item.get("chaveAcesso")) != key:
             day = None
         _, net = line_amounts(item)
+        if sale is not None and sale_day >= "2026-11-26":
+            embedded = None if uncertain else sum(tax[k] for k in EMBEDDED_FIELDS)
+            net = net-embedded if net is not None and embedded is not None and net>=embedded else None
         result.append({"day":day,
                        "order":origin if day and origin in order_days else None,
                        "directSale":bool(day and "codigoDavOrigem" in item and origin == "0"),
@@ -197,16 +234,19 @@ async def sale_recipient(client, headers, sale, order_recipients):
 
 def preview_document(sale, key, recipient, day, items, dated, redeemed_orders):
     lines = []
-    for item, match in zip(items, dated):
+    taxes, uncertain = item_taxes(items,sale)
+    for item, match, tax in zip(items, dated, taxes):
         gross, net = line_amounts(item)
         cfop = re.match(r"^\s*(\d{4})(?!\d)", str(item.get("cfop") or ""))
         lines.append({**match, "description":str(item.get("descricaoProduto") or "")[:240],
                       "cfop":cfop.group(1) if cfop else "", "gross":gross, "cents":net,
+                      "operation":str(item.get("cfop") or "")[:150],"taxes":tax,
+                      "embedded":None if uncertain else sum(tax[k] for k in EMBEDDED_FIELDS),
                       "unitPrice":str(item.get("precoUnitario") or "0"),
                       "gift":item.get("isBrinde") in (True,1,"1","S"),
                       "redeemed":match["order"] in redeemed_orders,
                       "matchesKey":str(item.get("chaveAcesso")) == key})
-    return {"key":key,"recipient":recipient,"day":day,"status":str(sale.get("status") or ""),
+    return {"charges":invoice_charges(sale,items),"key":key,"recipient":recipient,"day":day,"status":str(sale.get("status") or ""),
             "cancelled":sale.get("cancelado") in (True,1,"1","S"),
             "nature":str(sale.get("naturezaOperacao") or sale.get("natOp") or "")[:120],
             "voucher":bool(CODE.search(" ".join(str(sale.get(f) or "") for f in ("observacao","informacoesComplementares","infCpl")))),
@@ -293,7 +333,7 @@ async def sales_page(client, headers, day, offset, members=None):
                 events.append({**event,"key":key,"items":[{"sku":str(i.get("codigoProduto") or ""),
                     "unit":str(i.get("codigoUnidadeMedida") or ""),"quantity":i.get("quantidade")} for i in lines]})
         if key:
-            dated = purchase_lines(items,key,day,order_days)
+            dated = purchase_lines(items,key,day,order_days,sale)
             if dated:
                 purchase_dates.append({"key":key,"items":dated})
             if members:
