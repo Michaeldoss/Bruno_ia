@@ -244,7 +244,8 @@ def fiscal_state(sale):
         raw = str(sale.get(name) or "").strip().casefold()
         label = "".join(c for c in unicodedata.normalize("NFD", raw) if not unicodedata.combining(c))
         labels.append(" ".join(re.findall(r"[a-z0-9]+", label)))
-    if sale.get("cancelado") in (True, 1, "1", "S") or fiscal_code in {"101","151","155"} or any(
+    event_cancel = str(sale.get("tpEvento") or "")=="110111" and str(sale.get("cStatEvento") or "") in {"135","155"}
+    if event_cancel or sale.get("cancelado") in (True, 1, "1", "S") or fiscal_code in {"101","151","155"} or any(
         x in {"cancelada","cancelado","nf e cancelada","nfe cancelada","cancelamento autorizado","cancelamento homologado"} for x in labels
     ):
         return "cancelled"
@@ -264,6 +265,31 @@ def fiscal_state(sale):
     return "unknown"
 
 
+async def monitored_states(client, headers, watched):
+    """Re-read old sales by their stable ERP ID; an absent sale provides no evidence."""
+    import asyncio
+
+    async def check(entry):
+        found = await rows(client,headers,"v2/venda",{"idVenda.eq":entry["id"],"limit":2})
+        if not found:
+            return {"key":entry["key"],"state":"missing"}
+        if len(found)!=1 or str(found[0].get("idVenda"))!=entry["id"]:
+            raise ValueError("sale_filter_not_honored")
+        sale = found[0]
+        key = matching_key(sale)
+        identity = (str(sale.get("codigoCliente")),str(sale.get("codigoFilial")))
+        if identity!=(entry["customer"],entry["branch"]):
+            return {"key":entry["key"],"state":"unknown"}
+        if key!=entry["key"]:
+            # A cancellation can drop the access key from a listing. Accept only a
+            # positive cancellation of the exact sale, branch, buyer and NF number.
+            number=str(sale.get("documento") or "")
+            if sale.get("chaveAcesso") or not number.isdecimal() or int(number)!=int(entry["key"][25:34]) or fiscal_state(sale)!="cancelled":
+                return {"key":entry["key"],"state":"unknown"}
+        return {"key":entry["key"],"state":fiscal_state(sale)}
+    return await asyncio.gather(*(check(entry) for entry in watched))
+
+
 def preview_document(sale, key, recipient, day, items, dated, redeemed_orders):
     lines = []
     taxes, uncertain = item_taxes(items,sale)
@@ -279,7 +305,10 @@ def preview_document(sale, key, recipient, day, items, dated, redeemed_orders):
                       "redeemed":match["order"] in redeemed_orders,
                       "matchesKey":str(item.get("chaveAcesso")) == key})
     state = fiscal_state(sale)
+    refs={str(row.get(k)) for row in [sale,*items] for k in ("chaveAcessoReferenciada","chaveNFeReferenciada","chaveAcessoOrigem","refNFe") if row.get(k)}
     return {"fiscalState":state, "issuedTime":str(sale.get("dataHoraEmissao") or "")[:45],
+            "branch":str(sale.get("codigoFilial") or ""), "customer":str(sale.get("codigoCliente") or ""),
+            "originalKey":next(iter(refs)) if len(refs)==1 else None,
             "invoiceTotal":scaled(sale.get("valorTotal"),100), "saleId":str(sale["idVenda"]), "charges":invoice_charges(sale,items),"key":key,"recipient":recipient,"day":day,"status":str(sale.get("status") or ""),
             "cancelled":state=="cancelled",
             "nature":str(sale.get("naturezaOperacao") or sale.get("natOp") or "")[:120],

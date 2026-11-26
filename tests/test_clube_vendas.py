@@ -92,3 +92,18 @@ def test_fiscal_state_requires_positive_evidence_and_cancellation_wins():
     assert fiscal_state({"status":3,"descricaoStatusNFe":"Em processamento"})=="unknown"
     assert fiscal_state({"status":3,"cStat":110})=="unknown"
     assert fiscal_state({"status":999})=="unknown"
+
+
+@pytest.mark.asyncio
+async def test_monitor_rechecks_exact_id_without_inferring_cancel_from_absence():
+    from app.services.clube_vendas import monitored_states
+    target={"id":"17","key":key(),"branch":"2","customer":"7"}
+    row={"idVenda":17,"codigoFilial":2,"codigoCliente":7,"documento":"000017","status":3,"chaveAcesso":key()}
+    for records,expected in [([],"missing"),([row],"authorized"),([{**row,"cancelado":True}],"cancelled"),
+                             ([{**row,"cancelado":True,"chaveAcesso":"","codigoCliente":8}],"unknown"),
+                             ([{**row,"cancelado":True,"chaveAcesso":""}],"cancelled")]:
+        def handler(request):
+            assert request.url.params["idVenda.eq"]=="17"
+            return httpx.Response(200,json=records)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            assert await monitored_states(client,{},[target])==[{"key":key(),"state":expected}]
