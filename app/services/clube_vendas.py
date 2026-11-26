@@ -4,6 +4,7 @@ import io
 import json
 import re
 import zipfile
+import unicodedata
 from collections import Counter
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -232,6 +233,37 @@ async def sale_recipient(client, headers, sale, order_recipients):
     return recipients.pop()
 
 
+def fiscal_state(sale):
+    """Use affirmative ERP evidence only. Unknown numeric statuses are kept for retry."""
+    environment = str(sale.get("tpAmb") or "").strip()
+    if environment and environment != "1":
+        return "test" if environment == "2" else "unknown"
+    fiscal_code = str(sale.get("cStatNFe") or sale.get("cStat") or "").strip()
+    labels = []
+    for name in ("statusNFe", "situacaoNFe", "descricaoStatusNFe", "descricaoStatus", "status"):
+        raw = str(sale.get(name) or "").strip().casefold()
+        label = "".join(c for c in unicodedata.normalize("NFD", raw) if not unicodedata.combining(c))
+        labels.append(" ".join(re.findall(r"[a-z0-9]+", label)))
+    if sale.get("cancelado") in (True, 1, "1", "S") or fiscal_code in {"101","151","155"} or any(
+        x in {"cancelada","cancelado","nf e cancelada","nfe cancelada","cancelamento autorizado","cancelamento homologado"} for x in labels
+    ):
+        return "cancelled"
+    if any(x in {"denegada","rejeitada","inutilizada","nf e denegada","nf e rejeitada","nf e inutilizada"} for x in labels):
+        return "ineligible"
+    # DGtex's v2/venda status 3 is observed on an authorized model 55 sale,
+    # cross-checked against the identical issuer, access key and authorization protocol.
+    # An explicit fiscal field supersedes that operational status.
+    if fiscal_code and fiscal_code not in {"100","150"}:
+        return "unknown"
+    if fiscal_code in {"100","150"} or any(
+        x in {"autorizada","autorizado","nf e autorizada","nfe autorizada","autorizado o uso da nf e","autorizado o uso da nfe"} for x in labels
+    ):
+        return "authorized"
+    if str(sale.get("status","")).strip()=="3" and not any(labels[:-1]):
+        return "authorized"
+    return "unknown"
+
+
 def preview_document(sale, key, recipient, day, items, dated, redeemed_orders):
     lines = []
     taxes, uncertain = item_taxes(items,sale)
@@ -246,8 +278,10 @@ def preview_document(sale, key, recipient, day, items, dated, redeemed_orders):
                       "gift":item.get("isBrinde") in (True,1,"1","S"),
                       "redeemed":match["order"] in redeemed_orders,
                       "matchesKey":str(item.get("chaveAcesso")) == key})
-    return {"charges":invoice_charges(sale,items),"key":key,"recipient":recipient,"day":day,"status":str(sale.get("status") or ""),
-            "cancelled":sale.get("cancelado") in (True,1,"1","S"),
+    state = fiscal_state(sale)
+    return {"fiscalState":state, "issuedTime":str(sale.get("dataHoraEmissao") or "")[:45],
+            "invoiceTotal":scaled(sale.get("valorTotal"),100), "saleId":str(sale["idVenda"]), "charges":invoice_charges(sale,items),"key":key,"recipient":recipient,"day":day,"status":str(sale.get("status") or ""),
+            "cancelled":state=="cancelled",
             "nature":str(sale.get("naturezaOperacao") or sale.get("natOp") or "")[:120],
             "voucher":bool(CODE.search(" ".join(str(sale.get(f) or "") for f in ("observacao","informacoesComplementares","infCpl")))),
             "gross":scaled(sale.get("valorProdutos"),100),"discount":scaled(sale.get("desconto") or 0,100),
