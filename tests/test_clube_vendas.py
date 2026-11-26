@@ -56,3 +56,15 @@ async def test_member_preview_uses_verified_customer_and_item_cfop():
     line=matched["memberInvoices"][0]["lines"][0]
     assert (line["cfop"],line["cents"],line["day"])==("5102",40000,day)
     assert not other["memberInvoices"] and not matched["documents"]
+    assert other["identified"] == [k] and matched["identified"] == [k]
+
+@pytest.mark.asyncio
+async def test_missing_customer_keeps_invoice_key_pending():
+    k, day = key(), "2026-11-23"
+    def handler(req):
+        if req.url.path.endswith("/venda"):
+            return httpx.Response(200,json=[{"idVenda":1,"emissao":day,"chaveAcesso":k}])
+        return httpx.Response(200,json=[])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        page=await sales_page(client,{},day,0,{"11222333000181"})
+    assert page["unidentified"] == [k] and not page["memberInvoices"]
