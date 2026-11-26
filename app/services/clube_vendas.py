@@ -230,14 +230,17 @@ async def sales_page(client, headers, day, offset, members=None):
     events = [v for o in orders if (v:=order_match(o))]
     qualified = [s for s in sales if matching_key(s)]
     invoices, item_fields, linked_keys, states = [], set(), set(), Counter()
-    purchase_dates, previews, unidentified = [], [], []
+    purchase_dates, previews, unidentified, identified = [], [], [], []
     count_items = 0
     stock_events, payment_cache = [], {}
     for sale in sales:
         if sale.get("chaveAcesso") and not matching_key(sale):
             continue
         customer, key = str(sale.get("codigoCliente","")), matching_key(sale)
-        if not customer.isdigit(): continue
+        if not customer.isdigit():
+            if key and members:
+                unidentified.append(key)
+            continue
         items = await sale_items(client,headers,str(sale["idVenda"]),customer)
         item_fields.update(field_names(items))
         count_items += len(items)
@@ -297,9 +300,11 @@ async def sales_page(client, headers, day, offset, members=None):
                 recipient = await sale_recipient(client,headers,sale,order_recipients)
                 if not recipient:
                     unidentified.append(key)
-                elif recipient in members:
-                    previews.append(preview_document(sale,key,recipient,day,items,dated,redeemed_orders))
-    return {"unidentified":unidentified,"memberInvoices":previews,"purchaseDates":purchase_dates,"date":day,"offset":offset,"sales":len(sales),"issuerInvoices":len(qualified),"orders":len(orders),
+                else:
+                    identified.append(key)
+                    if recipient in members:
+                        previews.append(preview_document(sale,key,recipient,day,items,dated,redeemed_orders))
+    return {"unidentified":unidentified,"identified":identified,"memberInvoices":previews,"purchaseDates":purchase_dates,"date":day,"offset":offset,"sales":len(sales),"issuerInvoices":len(qualified),"orders":len(orders),
             "items":count_items,"orderCodes":sum(bool(order_match(o)) for o in orders),"linkedInvoices":len(linked_keys),
             "stockEvents":stock_events,"orderEvents":events,"documents":invoices,"statusCounts":dict(states),
             "nextOffset":offset+PAGE_SIZE if max(len(sales),len(orders))==PAGE_SIZE else None,
