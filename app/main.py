@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+import asyncio
+from app.services.clube_monitor import watch_invoices
 from app.config import get_settings
 from app.api.webhooks import router as webhook_router
 from app.services.followup_service import start_followup_service
@@ -42,9 +44,13 @@ async def lifespan(app: FastAPI):
     start_history_study()
     start_order_notifications()
     start_uniplus_orders()
+    club_monitor = asyncio.create_task(watch_invoices())
     try:
         yield
     finally:
+        club_monitor.cancel()
+        with suppress(asyncio.CancelledError):
+            await club_monitor
         await stop_uniplus_orders()
         await stop_order_notifications()
         await stop_history_study()
@@ -1515,4 +1521,3 @@ app.include_router(webhook_router, prefix="/webhooks", tags=["Webhooks"])
 # interromper mensagens enquanto o fluxo do n8n é atualizado.
 from app.api.webhooks import twilio_webhook
 app.add_api_route("/twils", twilio_webhook, methods=["POST"], name="twilio_webhook_legacy")
-
