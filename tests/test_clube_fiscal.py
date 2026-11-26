@@ -25,3 +25,14 @@ def test_pilot_scope_and_private_credential():
     with zipfile.ZipFile(io.BytesIO(pilot_documents(archive.getvalue()))) as result:
         assert len(result.namelist())==1
         assert result.read(result.namelist()[0])==xml(2,"45024640000170")
+
+
+def test_production_batch_is_scoped_to_dgtex_and_cannot_include_test_sales():
+    from app.api.clube_fiscal import fiscal_documents
+    archive=io.BytesIO()
+    with zipfile.ZipFile(archive,"w") as out:
+        out.writestr("prod.xml",xml(1,"45024640000170"))
+        out.writestr("other.xml",xml(1,"11222333000181"))
+        out.writestr("test.xml",xml(2,"45024640000170"))
+    with zipfile.ZipFile(io.BytesIO(fiscal_documents(archive.getvalue(),"1"))) as result:
+        assert [result.read(name) for name in result.namelist()]==[xml(1,"45024640000170")]
