@@ -125,10 +125,21 @@ async def fiscal_files(request:Request,file_id:str=None):
 
 
 @router.get("/vendas")
+@router.post("/vendas")
 async def direct_sales(request: Request, dia: str, offset: int = 0):
     from datetime import date
     from app.services.clube_vendas import sales_page
     authorize(request)
+    members = set()
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            values = body["members"]
+            if not isinstance(values,list) or any(not isinstance(v,str) or not re.fullmatch(r"[A-Z0-9]{12}\d{2}",v) for v in values):
+                raise ValueError()
+            members = set(values)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(422,"Lista de clientes do clube inválida.") from None
     try:
         if date.fromisoformat(dia).isoformat() != dia or not 0 <= offset <= 100000:
             raise ValueError()
@@ -138,7 +149,7 @@ async def direct_sales(request: Request, dia: str, offset: int = 0):
         raise HTTPException(503, "Filial da integração não confirmada.")
     try:
         async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
-            result = await sales_page(client,await uniplus_client._headers(),dia,offset)
+            result = await sales_page(client,await uniplus_client._headers(),dia,offset,members)
             return JSONResponse(result,headers=NO_STORE)
     except HTTPException:
         raise
