@@ -6,6 +6,7 @@ import json
 import os
 import re
 import zipfile
+from typing import Literal
 from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree
 
@@ -42,7 +43,7 @@ async def read_bytes(client, url, headers, limit, params=None):
         return bytes(data)
 
 
-async def manifest(client):
+async def manifest(client, environment="2"):
     if uniplus_client.UNIPLUS_BASE_URL.rstrip("/") != BASE:
         raise HTTPException(503, "Filial da integração não confirmada.")
     headers = await uniplus_client._headers()
@@ -64,13 +65,15 @@ async def manifest(client):
         allowed = {BASE, *[x.strip() for x in os.getenv("DOSS_CLUBE_FILE_ORIGINS", "").split(",") if x.strip()]}
         if parts.scheme != "https" or parts.username or parts.password or "https://"+parts.netloc not in allowed:
             raise HTTPException(502, "Origem do servidor de arquivos da filial pendente de confirmação.")
-        key = hashlib.sha256(json.dumps([name,date,parts.netloc,parts.path]).encode()).hexdigest()
+        key = hashlib.sha256(json.dumps(([environment] if environment=="1" else [])+[name,date,parts.netloc,parts.path]).encode()).hexdigest()
         files[key] = (date,url)
     return files,headers
 
 
-def pilot_documents(raw):
-    """Only homologation documents are allowed to leave the ERP bridge."""
+def fiscal_documents(raw, environment):
+    """Select only fiscal documents from the requested environment in the DGtex tenant."""
+    if environment not in ("1","2"):
+        raise ValueError("invalid_environment")
     output = io.BytesIO()
     def include(zout, data, index):
         if len(data)>1_048_576 or re.search(br'<!\s*(?:DOCTYPE|ENTITY)',data,re.I) or b'\x00' in data:
@@ -78,12 +81,12 @@ def pilot_documents(raw):
         root = ElementTree.fromstring(data)
         if root.tag == NFE+"nfeProc":
             info = root.find(NFE+"NFe/"+NFE+"infNFe")
-            if info is None or info.findtext(NFE+"ide/"+NFE+"tpAmb")!="2": return
+            if info is None or info.findtext(NFE+"ide/"+NFE+"tpAmb")!=environment: return
             involved = [info.findtext(k+"/"+NFE+"CNPJ") for k in (NFE+"emit",NFE+"dest")]
             if "45024640000170" not in involved: return
         elif root.tag == NFE+"procEventoNFe":
             info = root.find(NFE+"evento/"+NFE+"infEvento")
-            if info is None or info.findtext(NFE+"tpAmb")!="2" or info.findtext(NFE+"tpEvento")!="110111": return
+            if info is None or info.findtext(NFE+"tpAmb")!=environment or info.findtext(NFE+"tpEvento")!="110111": return
         else: return
         zout.writestr(str(index).zfill(6)+".xml",data)
 
@@ -102,20 +105,26 @@ def pilot_documents(raw):
     return output.getvalue()
 
 
+def pilot_documents(raw):
+    return fiscal_documents(raw,"2")
+
+
 @router.get("/arquivos")
 @router.get("/arquivos/{file_id}")
-async def fiscal_files(request:Request,file_id:str=None):
+async def fiscal_files(request:Request,file_id:str=None,ambiente:Literal["producao","homologacao"]="homologacao"):
     authorize(request)
     try:
         async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
-            files,headers = await manifest(client)
+            environment = "1" if ambiente=="producao" else "2"
+            result_headers = {**NO_STORE, "X-Clube-Ambiente":environment}
+            files,headers = await manifest(client,environment)
             if file_id is None:
-                return JSONResponse([{"id":k,"date":v[0]} for k,v in files.items()],headers=NO_STORE)
+                return JSONResponse([{"id":k,"date":v[0]} for k,v in files.items()],headers=result_headers)
             if file_id not in files: raise HTTPException(404,"Lote indisponível.")
             url=files[file_id][1]
             auth=headers if urlsplit(url).netloc==urlsplit(BASE).netloc else {}
             raw=await read_bytes(client,url,auth,12_582_912)
-            return Response(pilot_documents(raw),media_type="application/zip",headers=NO_STORE)
+            return Response(fiscal_documents(raw,environment),media_type="application/zip",headers=result_headers)
     except HTTPException:
         raise
     except (ValueError,ElementTree.ParseError,zipfile.BadZipFile):
@@ -126,7 +135,7 @@ async def fiscal_files(request:Request,file_id:str=None):
 
 @router.get("/vendas")
 @router.post("/vendas")
-async def direct_sales(request: Request, dia: str, offset: int = 0):
+async def direct_sales(request: Request, dia: str, offset: int = 0, ambiente:Literal["producao","homologacao"]="homologacao"):
     from datetime import date
     from app.services.clube_vendas import sales_page
     authorize(request)
@@ -149,7 +158,7 @@ async def direct_sales(request: Request, dia: str, offset: int = 0):
         raise HTTPException(503, "Filial da integração não confirmada.")
     try:
         async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
-            result = await sales_page(client,await uniplus_client._headers(),dia,offset,members)
+            result = await sales_page(client,await uniplus_client._headers(),dia,offset,members,"1" if ambiente=="producao" else "2")
             return JSONResponse(result,headers=NO_STORE)
     except HTTPException:
         raise
