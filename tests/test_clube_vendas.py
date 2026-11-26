@@ -78,3 +78,17 @@ def test_repeated_charge_and_tax_amounts_are_not_assumed_to_be_item_totals():
     assert "icms" in item_taxes([row,row],{})[1]
     assert not item_taxes([row,row],{"icms":24})[1]
     assert purchase_lines([row],key(),"2026-11-26",{},{})[0]["cents"]==8800
+
+
+def test_fiscal_state_requires_positive_evidence_and_cancellation_wins():
+    from app.services.clube_vendas import fiscal_state
+    assert fiscal_state({"status":"NF-e Autorizada"})=="authorized"
+    assert fiscal_state({"cStatNFe":100})=="authorized"
+    assert fiscal_state({"cStatNFe":100,"cancelado":"S"})=="cancelled"
+    assert fiscal_state({"status":"NF-e Cancelada"})=="cancelled"
+    assert fiscal_state({"status":"Cancelamento solicitado"})=="unknown"
+    assert fiscal_state({"cStat":100,"tpAmb":2})=="test"
+    assert fiscal_state({"status":3})=="authorized"
+    assert fiscal_state({"status":3,"descricaoStatusNFe":"Em processamento"})=="unknown"
+    assert fiscal_state({"status":3,"cStat":110})=="unknown"
+    assert fiscal_state({"status":999})=="unknown"
