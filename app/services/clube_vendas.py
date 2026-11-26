@@ -6,7 +6,7 @@ import re
 import zipfile
 from collections import Counter
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from xml.etree import ElementTree
 
 from fastapi import HTTPException
@@ -136,6 +136,21 @@ def scaled(value, scale):
     return None
 
 
+def line_amounts(item):
+    """valorProdutos is the invoice subtotal echoed on every ERP item."""
+    try:
+        quantity = Decimal(str(item.get("quantidade")))
+        price = Decimal(str(item.get("precoUnitario")))
+        if not quantity.is_finite() or not price.is_finite() or quantity <= 0 or price < 0:
+            return None, None
+        gross = scaled((quantity * price).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), 100)
+    except (ValueError, InvalidOperation):
+        return None, None
+    discount = scaled(item.get("desconto") or 0, 100)
+    net = gross - discount if gross is not None and discount is not None and discount <= gross else None
+    return gross, net
+
+
 def purchase_lines(items, key, sale_day, order_days):
     result = []
     for item in items:
@@ -145,19 +160,61 @@ def purchase_lines(items, key, sale_day, order_days):
             day = sale_day
         if str(item.get("chaveAcesso")) != key:
             day = None
-        gross = scaled(item.get("valorProdutos"), 100)
-        discount = scaled(item.get("desconto") or 0, 100)
+        _, net = line_amounts(item)
         result.append({"day":day,
                        "order":origin if day and origin in order_days else None,
                        "directSale":bool(day and "codigoDavOrigem" in item and origin == "0"),
                        "sku":str(item.get("codigoProduto") or ""),
                        "unit":str(item.get("codigoUnidadeMedida") or ""),
                        "qty":scaled(item.get("quantidade"), 10000),
-                       "cents":gross-discount if gross is not None and discount is not None and gross >= discount else None})
+                       "cents":net})
     return result
 
 
-async def sales_page(client, headers, day, offset):
+def document_id(value):
+    return re.sub(r"[./\s-]", "", str(value or "")).upper()
+
+
+async def sale_recipient(client, headers, sale, order_recipients):
+    recipients = set(order_recipients)
+    direct = document_id(sale.get("cnpjCpfCliente"))
+    if direct:
+        recipients.add(direct)
+    if not recipients:
+        customer = str(sale["codigoCliente"])
+        res = await client.get(ERP_ORIGIN + "/public-api/v1/entidades/" + customer, headers=headers)
+        if res.status_code == 404:
+            return None
+        res.raise_for_status()
+        entity = res.json()
+        if str(entity.get("codigo")) != customer:
+            raise ValueError("customer_filter_not_honored")
+        recipients.add(document_id(entity.get("cnpjCpf")))
+    if len(recipients) != 1 or not next(iter(recipients)):
+        return None
+    return recipients.pop()
+
+
+def preview_document(sale, key, recipient, day, items, dated, redeemed_orders):
+    lines = []
+    for item, match in zip(items, dated):
+        gross, net = line_amounts(item)
+        cfop = re.match(r"^\s*(\d{4})(?!\d)", str(item.get("cfop") or ""))
+        lines.append({**match, "description":str(item.get("descricaoProduto") or "")[:240],
+                      "cfop":cfop.group(1) if cfop else "", "gross":gross, "cents":net,
+                      "unitPrice":str(item.get("precoUnitario") or "0"),
+                      "gift":item.get("isBrinde") in (True,1,"1","S"),
+                      "redeemed":match["order"] in redeemed_orders,
+                      "matchesKey":str(item.get("chaveAcesso")) == key})
+    return {"key":key,"recipient":recipient,"day":day,"status":str(sale.get("status") or ""),
+            "cancelled":sale.get("cancelado") in (True,1,"1","S"),
+            "nature":str(sale.get("naturezaOperacao") or sale.get("natOp") or "")[:120],
+            "voucher":bool(CODE.search(" ".join(str(sale.get(f) or "") for f in ("observacao","informacoesComplementares","infCpl")))),
+            "gross":scaled(sale.get("valorProdutos"),100),"discount":scaled(sale.get("desconto") or 0,100),
+            "lines":lines}
+
+
+async def sales_page(client, headers, day, offset, members=None):
     import asyncio
     sales, orders = await asyncio.gather(
         rows(client, headers, "v2/venda", {"emissao.eq":day,"offset":offset,"limit":PAGE_SIZE}),
@@ -173,7 +230,7 @@ async def sales_page(client, headers, day, offset):
     events = [v for o in orders if (v:=order_match(o))]
     qualified = [s for s in sales if matching_key(s)]
     invoices, item_fields, linked_keys, states = [], set(), set(), Counter()
-    purchase_dates = []
+    purchase_dates, previews, unidentified = [], [], []
     count_items = 0
     stock_events, payment_cache = [], {}
     for sale in sales:
@@ -190,7 +247,7 @@ async def sales_page(client, headers, day, offset):
             continue
         status = str(sale.get("status",""))
         if re.fullmatch(r"[A-Za-z0-9]{1,4}",status): states[status] += 1
-        order_days = {}
+        order_days, order_recipients, redeemed_orders = {}, set(), set()
         grouped = {}
         for it in items:
             order_id=str(it.get("codigoDavOrigem") or "")
@@ -209,6 +266,11 @@ async def sales_page(client, headers, day, offset):
             if any(str(i.get("tipoDavOrigem"))!=str(order.get("tipoDocumento")) for i in lines): continue
             if key:
                 linked_keys.add(key)
+                recipient = document_id(order.get("cnpjCpfCliente"))
+                if recipient:
+                    order_recipients.add(recipient)
+                if CODE.search(str(order.get("observacao") or "")):
+                    redeemed_orders.add(number)
                 raw_day = str(order.get("data") or "")[:10]
                 try:
                     order_day = date.fromisoformat(raw_day).isoformat()
@@ -227,9 +289,17 @@ async def sales_page(client, headers, day, offset):
             elif event:
                 events.append({**event,"key":key,"items":[{"sku":str(i.get("codigoProduto") or ""),
                     "unit":str(i.get("codigoUnidadeMedida") or ""),"quantity":i.get("quantidade")} for i in lines]})
-        if key and items:
-            purchase_dates.append({"key":key,"items":purchase_lines(items,key,day,order_days)})
-    return {"purchaseDates":purchase_dates,"date":day,"offset":offset,"sales":len(sales),"issuerInvoices":len(qualified),"orders":len(orders),
+        if key:
+            dated = purchase_lines(items,key,day,order_days)
+            if dated:
+                purchase_dates.append({"key":key,"items":dated})
+            if members:
+                recipient = await sale_recipient(client,headers,sale,order_recipients)
+                if not recipient:
+                    unidentified.append(key)
+                elif recipient in members:
+                    previews.append(preview_document(sale,key,recipient,day,items,dated,redeemed_orders))
+    return {"unidentified":unidentified,"memberInvoices":previews,"purchaseDates":purchase_dates,"date":day,"offset":offset,"sales":len(sales),"issuerInvoices":len(qualified),"orders":len(orders),
             "items":count_items,"orderCodes":sum(bool(order_match(o)) for o in orders),"linkedInvoices":len(linked_keys),
             "stockEvents":stock_events,"orderEvents":events,"documents":invoices,"statusCounts":dict(states),
             "nextOffset":offset+PAGE_SIZE if max(len(sales),len(orders))==PAGE_SIZE else None,
