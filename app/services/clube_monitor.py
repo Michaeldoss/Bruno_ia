@@ -15,7 +15,8 @@ async def watch_invoices():
         return
     async with httpx.AsyncClient(timeout=120, follow_redirects=False) as client:
         while True:
-            delay = 120
+            started = asyncio.get_running_loop().time()
+            has_more = False
             try:
                 reply = await client.post(SYNC, headers={"Authorization":"Bearer " + key})
                 reply.raise_for_status()
@@ -23,7 +24,10 @@ async def watch_invoices():
                 if result.get("directFailure") or result.get("state") == "unavailable":
                     log.warning("Consulta de notas do clube pendente para nova tentativa.")
                 elif any(page.get("hasMore") for page in result.get("direct", [])):
-                    delay = 5
+                    has_more = True
             except (httpx.HTTPError, ValueError, TypeError, AttributeError):
-                log.warning("Consulta de notas do clube indisponível. Nova tentativa em dois minutos.")
-            await asyncio.sleep(delay)
+                log.warning("Consulta de notas do clube indisponível. Nova tentativa no próximo ciclo.")
+            elapsed = asyncio.get_running_loop().time() - started
+            # Start each regular check one minute after the previous start. Drain
+            # a multi-page day faster, without overlapping requests.
+            await asyncio.sleep(5 if has_more else max(0, 60 - elapsed))
