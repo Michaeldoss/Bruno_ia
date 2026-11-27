@@ -12,6 +12,27 @@ def row(code, name, **extra):
 
 
 class SupplyNames(unittest.TestCase):
+    def test_dgtex_explicit_technology_overrides_brand_inference(self):
+        for technology in ('DTF', 'UV', 'eco-solvente'):
+            with self.subTest(technology=technology):
+                self.assertTrue(supply_name_matches_query(
+                    f'tinta {technology} branca 1L',
+                    f'TINTA DGTEX {technology} WHITE 1000ml'))
+        self.assertTrue(supply_name_matches_query(
+            'tinta DG-tex DTF branca 1L', 'TINTA DGTEX DTF WHITE 1000ml'))
+
+    def test_dgtex_keeps_implicit_subli_and_technology_fences(self):
+        self.assertTrue(supply_name_matches_query(
+            'tinta subli premium preta 1L', 'TINTA DGTEX PREMIUM BLACK 1000ml'))
+        for query, name in (
+            ('tinta subli branca 1L', 'TINTA DGTEX DTF WHITE 1000ml'),
+            ('tinta DTF branca 1L', 'TINTA DGTEX UV DTF WHITE 1000ml'),
+            ('tinta DTF branca 5L', 'TINTA DGTEX DTF WHITE 1000ml'),
+            ('tinta DTF amarela 1L', 'TINTA DGTEX DTF WHITE 1000ml'),
+        ):
+            with self.subTest(query=query, name=name):
+                self.assertFalse(supply_name_matches_query(query, name))
+
     def test_colour_aliases_and_accents(self):
         self.assertTrue(supply_name_matches_query(
             "Quanto sai a tinta DTF branca de 1 litro?", "TINTA DTF PRIME WHITE - 1LT"))
@@ -62,6 +83,15 @@ class SupplyNames(unittest.TestCase):
 
 
 class SupplyLookup(unittest.IsolatedAsyncioTestCase):
+    async def test_dgtex_dtf_is_discovered_without_crossing_technology(self):
+        self.rows[:] = [
+            row('20', 'TINTA DGTEX DTF WHITE 1000ml'),
+            row('21', 'TINTA DGTEX PREMIUM WHITE 1000ml'),
+            row('22', 'TINTA DGTEX UV DTF WHITE 1000ml'),
+        ]
+        result = await self.client.lookup_supplies_candidates('tinta DTF branca 1L')
+        self.assertEqual(result, [{'codigo': '20', 'nome': 'TINTA DGTEX DTF WHITE 1000ml'}])
+
     async def asyncSetUp(self):
         self.client = SheetsClient()
         self.rows = [
